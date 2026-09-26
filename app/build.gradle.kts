@@ -7,8 +7,10 @@ android {
   versionCode = 6; versionName = "6.0-simple-friend"
   buildConfigField("String", "PIKA_TOKEN_URL", "\"https://example.invalid/token\"")
  }
+ compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  buildFeatures { buildConfig = true }
 }
+kotlin { jvmToolchain(17) }
 dependencies {
  implementation("androidx.core:core-ktx:1.15.0")
  implementation("androidx.appcompat:appcompat:1.7.0")
