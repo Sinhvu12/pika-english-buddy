@@ -3,21 +3,37 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      token_url:
+        description: 'HTTPS URL of the Pika /token endpoint'
+        required: false
+        type: string
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - run: gradle :app:assembleDebug --stacktrace
+      - name: Build APK
+        env:
+          INPUT_TOKEN_URL: ${{ inputs.token_url }}
+          SECRET_TOKEN_URL: ${{ secrets.PIKA_TOKEN_URL }}
+        run: |
+          URL="${INPUT_TOKEN_URL:-$SECRET_TOKEN_URL}"
+          if [ -n "$URL" ]; then
+            gradle :app:assembleDebug -PPIKA_TOKEN_URL="$URL" --stacktrace
+          else
+            echo "PIKA_TOKEN_URL not configured; building UI-only APK"
+            gradle :app:assembleDebug --stacktrace
+          fi
       - uses: actions/upload-artifact@v4
         with:
-          name: Pika-English-Buddy-v6-debug
+          name: Pika-English-Buddy-v7-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
