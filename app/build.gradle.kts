@@ -1,11 +1,11 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
- namespace = "com.pika.englishbuddy"
- compileSdk = 35
+ namespace = "com.pika.englishbuddy"; compileSdk = 35
  defaultConfig {
   applicationId = "com.pika.englishbuddy"; minSdk = 30; targetSdk = 35
-  versionCode = 6; versionName = "6.0-simple-friend"
-  buildConfigField("String", "PIKA_TOKEN_URL", "\"https://example.invalid/token\"")
+  versionCode = 7; versionName = "7.0-voice-ready"
+  val tokenUrl = (project.findProperty("PIKA_TOKEN_URL") as String?) ?: "https://example.invalid/token"
+  buildConfigField("String", "PIKA_TOKEN_URL", "\"$tokenUrl\"")
  }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  buildFeatures { buildConfig = true }
