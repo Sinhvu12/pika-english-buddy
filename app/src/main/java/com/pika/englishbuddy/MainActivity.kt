@@ -1,4 +1,4 @@
-package com.lumi.englishbuddy
+package com.pika.englishbuddy
 import android.Manifest
 import android.animation.ObjectAnimator
 import android.content.pm.PackageManager
@@ -22,7 +22,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  private lateinit var bubble:TextView
  private lateinit var stars:TextView
  private lateinit var mic:TextView
- private lateinit var lumi:ImageView
+ private lateinit var pika:ImageView
  private var score=0
  private fun dp(v:Int)=(v*resources.displayMetrics.density).toInt()
  private fun shape(c:Int,r:Int,stroke:Int=0,sc:Int=Color.TRANSPARENT)=GradientDrawable().apply{setColor(c);cornerRadius=dp(r).toFloat();if(stroke>0)setStroke(dp(stroke),sc)}
@@ -37,8 +37,8 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   val dress=TextView(this).apply{text="👗";textSize=21f;gravity=Gravity.CENTER;background=shape(Color.WHITE,24,1,Color.rgb(255,220,233));setPadding(dp(11),dp(7),dp(11),dp(7));setOnClickListener{wardrobe()}}
   top.addView(logo);top.addView(sub);top.addView(Space(this),LinearLayout.LayoutParams(0,1,1f));top.addView(stars);top.addView(Space(this),LinearLayout.LayoutParams(dp(8),1));top.addView(dress)
   val stage=FrameLayout(this).apply{background=shape(Color.rgb(255,234,243),30);clipToOutline=true}
-  lumi=ImageView(this).apply{setImageResource(R.drawable.lumi_chibi);scaleType=ImageView.ScaleType.FIT_CENTER;contentDescription="Lumi"}
-  stage.addView(lumi,FrameLayout.LayoutParams(-1,-1))
+  pika=ImageView(this).apply{setImageResource(R.drawable.lumi_chibi);scaleType=ImageView.ScaleType.FIT_CENTER;contentDescription="Lumi"}
+  stage.addView(pika,FrameLayout.LayoutParams(-1,-1))
   bubble=TextView(this).apply{text="Hello! I'm Lumi!\nLet's speak English together 💗";textSize=18f;setTextColor(Color.rgb(99,29,71));setTypeface(typeface,Typeface.BOLD);gravity=Gravity.CENTER;background=shape(Color.argb(246,255,255,255),22);elevation=dp(5).toFloat();setPadding(dp(18),dp(13),dp(18),dp(13))}
   stage.addView(bubble,FrameLayout.LayoutParams(-1,-2).apply{gravity=Gravity.TOP;setMargins(dp(20),dp(18),dp(20),0)})
   status=TextView(this).apply{text="Tap the microphone and talk to Lumi";textSize=14f;setTextColor(Color.rgb(119,76,98));gravity=Gravity.CENTER}
@@ -48,13 +48,13 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   root.addView(status,LinearLayout.LayoutParams(-1,dp(32)))
   val micRow=FrameLayout(this);micRow.addView(mic,FrameLayout.LayoutParams(dp(76),dp(76),Gravity.CENTER))
   root.addView(micRow,LinearLayout.LayoutParams(-1,dp(84)));setContentView(root)
-  ObjectAnimator.ofFloat(lumi,View.TRANSLATION_Y,0f,-dp(5).toFloat(),0f).apply{duration=3000;repeatCount=ObjectAnimator.INFINITE;start()}
+  ObjectAnimator.ofFloat(pika,View.TRANSLATION_Y,0f,-dp(5).toFloat(),0f).apply{duration=3000;repeatCount=ObjectAnimator.INFINITE;start()}
  }
  private fun startVoice(){mic.animate().scaleX(.9f).scaleY(.9f).setDuration(100).withEndAction{mic.animate().scaleX(1f).scaleY(1f).duration=140}.start();if(ActivityCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)voice.connect() else ActivityCompat.requestPermissions(this,arrayOf(Manifest.permission.RECORD_AUDIO),7)}
  override fun onRequestPermissionsResult(r:Int,p:Array<out String>,g:IntArray){super.onRequestPermissionsResult(r,p,g);if(r==7&&g.firstOrNull()==PackageManager.PERMISSION_GRANTED)voice.connect()}
  override fun onStatus(t:String)=runOnUiThread{status.text=t}
  override fun onUserTranscript(t:String)=runOnUiThread{if(t.isNotBlank()){score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score";bubble.text=t}}
- override fun onLumiTranscript(t:String)=runOnUiThread{if(t.isNotBlank()){bubble.alpha=0f;bubble.text=t;bubble.animate().alpha(1f).setDuration(220).start()}}
+ override fun onPikaTranscript(t:String)=runOnUiThread{if(t.isNotBlank()){bubble.alpha=0f;bubble.text=t;bubble.animate().alpha(1f).setDuration(220).start()}}
  override fun onSpeaking(a:Boolean,l:Float)=runOnUiThread{status.text=if(a)"Lumi is speaking…" else "I'm listening…"}
  override fun onReady(r:Boolean)=Unit
  override fun onError(t:String)=runOnUiThread{status.text=if(BuildConfig.PIKA_TOKEN_URL.contains("example.invalid"))"Voice will be connected in the final API step" else t}
