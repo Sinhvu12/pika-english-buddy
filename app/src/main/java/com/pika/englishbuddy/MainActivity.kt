@@ -37,7 +37,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   val dress=TextView(this).apply{text="👗";textSize=21f;gravity=Gravity.CENTER;background=shape(Color.WHITE,24,1,Color.rgb(255,220,233));setPadding(dp(11),dp(7),dp(11),dp(7));setOnClickListener{wardrobe()}}
   top.addView(logo);top.addView(sub);top.addView(Space(this),LinearLayout.LayoutParams(0,1,1f));top.addView(stars);top.addView(Space(this),LinearLayout.LayoutParams(dp(8),1));top.addView(dress)
   val stage=FrameLayout(this).apply{background=shape(Color.rgb(255,234,243),30);clipToOutline=true}
-  pika=ImageView(this).apply{setImageResource(R.drawable.pika_hero);scaleType=ImageView.ScaleType.CENTER_CROP;contentDescription="Pika"}
+  pika=ImageView(this).apply{setImageResource(R.drawable.pika_hero);scaleType=ImageView.ScaleType.FIT_CENTER;contentDescription="Pika"}
   stage.addView(pika,FrameLayout.LayoutParams(-1,-1))
   bubble=TextView(this).apply{text="Hello! I'm Pika!\nLet's speak English together 💗";textSize=18f;setTextColor(Color.rgb(99,29,71));setTypeface(typeface,Typeface.BOLD);gravity=Gravity.CENTER;background=shape(Color.argb(246,255,255,255),22);elevation=dp(5).toFloat();setPadding(dp(18),dp(13),dp(18),dp(13))}
   stage.addView(bubble,FrameLayout.LayoutParams(-1,-2).apply{gravity=Gravity.TOP;setMargins(dp(20),dp(18),dp(20),0)})
