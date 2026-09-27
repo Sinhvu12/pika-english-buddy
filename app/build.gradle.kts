@@ -3,7 +3,7 @@ android {
  namespace = "com.pika.englishbuddy"; compileSdk = 35
  defaultConfig {
   applicationId = "com.pika.englishbuddy"; minSdk = 30; targetSdk = 35
-  versionCode = 8; versionName = "8.0-pika-3d-ui"
+  versionCode = 10; versionName = "10.0-hd-fixed"
   val tokenUrl = (project.findProperty("PIKA_TOKEN_URL") as String?) ?: "https://example.invalid/token"
   buildConfigField("String", "PIKA_TOKEN_URL", "\"$tokenUrl\"")
  }
