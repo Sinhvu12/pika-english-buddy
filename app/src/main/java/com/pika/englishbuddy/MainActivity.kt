@@ -40,7 +40,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   val dress=TextView(this).apply{text="👗";textSize=21f;gravity=Gravity.CENTER;background=shape(Color.WHITE,24,1,Color.rgb(255,220,233));setPadding(dp(11),dp(7),dp(11),dp(7));setOnClickListener{wardrobe()}}
   top.addView(logo);top.addView(sub);top.addView(Space(this),LinearLayout.LayoutParams(0,1,1f));top.addView(stars);top.addView(Space(this),LinearLayout.LayoutParams(dp(8),1));top.addView(dress)
   val stage=FrameLayout(this).apply{background=shape(Color.rgb(255,234,243),30);clipToOutline=true}
-  pika=ImageView(this).apply{setImageResource(R.drawable.lumi_character);scaleType=ImageView.ScaleType.FIT_CENTER;contentDescription="Lumi"}
+  pika=ImageView(this).apply{setImageResource(R.drawable.lumi_character_png);scaleType=ImageView.ScaleType.FIT_CENTER;contentDescription="Lumi"}
   stage.addView(pika,FrameLayout.LayoutParams(-1,-1))
   eyeL=View(this).apply{background=shape(Color.rgb(255,218,220),20);alpha=0f};eyeR=View(this).apply{background=shape(Color.rgb(255,218,220),20);alpha=0f};mouth=View(this).apply{background=shape(Color.rgb(190,45,75),20);alpha=0f}
   stage.addView(eyeL,FrameLayout.LayoutParams(dp(34),dp(11)));stage.addView(eyeR,FrameLayout.LayoutParams(dp(34),dp(11)));stage.addView(mouth,FrameLayout.LayoutParams(dp(22),dp(12)))
