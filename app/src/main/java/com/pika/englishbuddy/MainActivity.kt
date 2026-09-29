@@ -3,6 +3,7 @@ import android.Manifest
 import android.animation.ObjectAnimator
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import android.graphics.Bitmap
 import android.util.Base64
 import android.graphics.Color
 import android.graphics.Canvas
@@ -42,7 +43,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  private lateinit var mic:TextView
  private lateinit var answerRow:LinearLayout
  private lateinit var pika:ImageView
- private lateinit var dressOverlay:View
+ private var originalLumi:Bitmap?=null
  private var selectedDress=0
  private val dressColors=intArrayOf(0xFFF68DB6.toInt(),0xFF64B7F4.toInt(),0xFFF8CD4B.toInt(),0xFF70CFA4.toInt(),0xFFB18DE9.toInt())
  private lateinit var mouth:View
@@ -107,38 +108,10 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
     val bytes = Base64.decode(encoded.trim(), Base64.DEFAULT)
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
    }.getOrNull()
-   if (character != null && character.width > 0 && character.height > 0) setImageBitmap(character) else setImageResource(R.drawable.lumi_chibi)
+   if (character != null && character.width > 0 && character.height > 0) { originalLumi=character;setImageBitmap(recolorDress(character,selectedDress)) } else setImageResource(R.drawable.lumi_chibi)
    scaleType=ImageView.ScaleType.FIT_CENTER;contentDescription="Lumi"
   }
   stage.addView(pika,FrameLayout.LayoutParams(-1,-1))
-  dressOverlay=object:View(this){
-   private val paint=Paint(Paint.ANTI_ALIAS_FLAG)
-   override fun onDraw(c:Canvas){
-    super.onDraw(c)
-    if(selectedDress==0)return
-    val w=width.toFloat();val h=height.toFloat()
-    val cx=w*.50f
-    val cy=h*.67f
-    val unit=minOf(w,h)*.15f
-    val outline=Path().apply{
-     moveTo(cx-unit*.34f,cy-unit*.53f)
-     lineTo(cx+unit*.34f,cy-unit*.53f)
-     lineTo(cx+unit*.44f,cy-unit*.13f)
-     lineTo(cx+unit*.83f,cy+unit*.66f)
-     quadTo(cx,cy+unit*.94f,cx-unit*.83f,cy+unit*.66f)
-     lineTo(cx-unit*.44f,cy-unit*.13f)
-     close()
-    }
-    paint.style=Paint.Style.FILL;paint.color=dressColors[selectedDress]
-    c.drawPath(outline,paint)
-    paint.style=Paint.Style.STROKE;paint.strokeWidth=unit*.055f;paint.color=Color.WHITE
-    c.drawPath(outline,paint)
-    paint.style=Paint.Style.FILL;paint.color=Color.WHITE
-    c.drawCircle(cx,cy-unit*.22f,unit*.075f,paint)
-    c.drawCircle(cx,cy-unit*.01f,unit*.075f,paint)
-   }
-  }
-  stage.addView(dressOverlay,FrameLayout.LayoutParams(-1,-1))
   eyeL=View(this).apply{background=shape(Color.rgb(255,218,220),20);alpha=0f};eyeR=View(this).apply{background=shape(Color.rgb(255,218,220),20);alpha=0f};mouth=View(this).apply{background=shape(Color.rgb(190,45,75),20);alpha=0f}
   stage.addView(eyeL,FrameLayout.LayoutParams(dp(34),dp(11)));stage.addView(eyeR,FrameLayout.LayoutParams(dp(34),dp(11)));stage.addView(mouth,FrameLayout.LayoutParams(dp(22),dp(12)))
   stage.post{fun pos(v:View,x:Float,y:Float){v.x=stage.width*x-v.layoutParams.width/2f;v.y=stage.height*y-v.layoutParams.height/2f};pos(eyeL,.39f,.31f);pos(eyeR,.61f,.31f);pos(mouth,.50f,.39f);blinkLoop()}
@@ -240,6 +213,28 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  override fun onReady(r:Boolean)=runOnUiThread{if(r){offline=false;answerRow.visibility=View.GONE;status.text="🟢 Connected · Lumi is listening";bubble.visibility=View.GONE}}
  override fun onError(t:String)=runOnUiThread{geminiFailureMessage=t.take(150);if(!offline)fallback();status.text="⚠ Gemini: $geminiFailureMessage";Toast.makeText(this,"Gemini: $geminiFailureMessage",Toast.LENGTH_LONG).show()}
  private fun blinkLoop(){eyeL.postDelayed(object:Runnable{override fun run(){eyeL.alpha=.92f;eyeR.alpha=.92f;eyeL.postDelayed({eyeL.alpha=0f;eyeR.alpha=0f},130);eyeL.postDelayed(this,3200)}},1800)}
+ private fun recolorDress(source:Bitmap,dress:Int):Bitmap{
+  if(dress==0)return source
+  val w=source.width;val h=source.height
+  val pixels=IntArray(w*h)
+  source.getPixels(pixels,0,w,0,0,w,h)
+  val hsv=FloatArray(3)
+  val hue=when(dress){1->210f;2->46f;3->150f;else->275f}
+  for(y in (h*.39f).toInt() until (h*.83f).toInt()){
+   for(x in (w*.24f).toInt() until (w*.76f).toInt()){
+    val i=y*w+x;val color=pixels[i]
+    if(Color.alpha(color)<180)continue
+    Color.colorToHSV(color,hsv)
+    // Only recolor the original cyan-blue fabric; keep skin, hair, background and outlines.
+    if(hsv[0] in 180f..215f && hsv[1] in .16f.. .65f && hsv[2]>.58f){
+     hsv[0]=hue
+     hsv[1]=(hsv[1]*1.35f).coerceIn(.23f,.68f)
+     pixels[i]=Color.HSVToColor(Color.alpha(color),hsv)
+    }
+   }
+  }
+  return Bitmap.createBitmap(pixels,w,h,Bitmap.Config.ARGB_8888)
+ }
  private fun wardrobe(){
   val need=intArrayOf(0,10,20,35,50)
   val names=arrayOf("🌸 Pink Princess","💙 Sky Blue","💛 Sunny Yellow","🌿 Mint Green","💜 Purple Sparkle")
@@ -248,7 +243,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
    if(score>=need[i]){
     selectedDress=i
     getSharedPreferences("lumi",0).edit().putInt("dress",i).apply()
-    dressOverlay.invalidate()
+    originalLumi?.let{pika.setImageBitmap(recolorDress(it,selectedDress))}
     Toast.makeText(this,"Lumi đã thay váy! 💗",Toast.LENGTH_SHORT).show()
    }else Toast.makeText(this,"Cần ${need[i]} sao để mở váy này ⭐",Toast.LENGTH_SHORT).show()
   }.setNegativeButton("Close",null).show()
