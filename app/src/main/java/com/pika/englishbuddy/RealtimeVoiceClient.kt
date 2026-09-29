@@ -37,6 +37,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
  @Volatile private var assistantSpeaking=false
  @Volatile private var playingAudio=false
  private var audioWorker:Thread?=null
+ @Volatile private var lastSpeakingNotification=false
  @Volatile private var sessionEpoch=0
  @Volatile private var playbackErrorReported=false
  @Volatile private var playbackResetRequested=false
@@ -49,7 +50,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   if(connected||connecting){close();listener.onStatus("Voice session ended.");return}
   intentionalClose=false;failed=false;connecting=true;socketOpened=false;playbackErrorReported=false;sessionEpoch++
   val epoch=sessionEpoch
-  audioQueue.clear();audioTurnEnded=false;assistantSpeaking=false;suppressMicUntil=0L;playbackResetRequested=false
+  audioQueue.clear();audioTurnEnded=false;assistantSpeaking=false;lastSpeakingNotification=false;suppressMicUntil=0L;playbackResetRequested=false
   timeout?.let{main.removeCallbacks(it)}
   timeout=Runnable{if(connecting&&!connected)fail(if(socketOpened)"Gemini WebSocket opened but setup was not confirmed within 30s" else "Could not open Gemini WebSocket within 30s; check network, VPN or firewall")}
   main.postDelayed(timeout!!,30000)
@@ -127,7 +128,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   val content=j.optJSONObject("serverContent")?:j.optJSONObject("server_content")?:return
   content.optJSONObject("inputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onUserTranscript(it)}
   content.optJSONObject("outputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onPikaTranscript(it)}
-  if(content.optBoolean("interrupted")){audioGeneration++;audioQueue.clear();audioTurnEnded=false;playbackResetRequested=true;assistantSpeaking=false;suppressMicUntil=android.os.SystemClock.elapsedRealtime()+350;listener.onSpeaking(false,0f)}
+  if(content.optBoolean("interrupted")){audioGeneration++;audioQueue.clear();audioTurnEnded=false;playbackResetRequested=true;assistantSpeaking=false;suppressMicUntil=android.os.SystemClock.elapsedRealtime()+350;lastSpeakingNotification=false;listener.onSpeaking(false,0f)}
   val parts=content.optJSONObject("modelTurn")?.optJSONArray("parts")
   if(parts!=null)for(i in 0 until parts.length()){
    val inline=parts.optJSONObject(i)?.optJSONObject("inlineData")?:continue
@@ -179,6 +180,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
           audioTurnEnded=false
           assistantSpeaking=false
           suppressMicUntil=android.os.SystemClock.elapsedRealtime()+180
+          lastSpeakingNotification=false
           listener.onSpeaking(false,0f)
          }
         }
@@ -197,7 +199,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   audioTurnEnded=false
   assistantSpeaking=true
   audioQueue.offer(bytes)
-  listener.onSpeaking(true,.5f)
+  if(!lastSpeakingNotification){lastSpeakingNotification=true;listener.onSpeaking(true,.5f)}
  }
  fun close(){
   intentionalClose=true;connecting=false;sessionEpoch++
@@ -205,6 +207,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   recording=false;connected=false
   playingAudio=false;audioGeneration++;audioQueue.clear();playbackResetRequested=true;audioWorker?.interrupt();audioWorker=null
   assistantSpeaking=false
+  lastSpeakingNotification=false
   listener.onSpeaking(false,0f)
   try{recorder?.stop()}catch(_:Exception){}
   recorder?.release();recorder=null
