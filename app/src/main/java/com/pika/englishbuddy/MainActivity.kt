@@ -2,8 +2,6 @@ package com.pika.englishbuddy
 import android.Manifest
 import android.animation.ObjectAnimator
 import android.content.pm.PackageManager
-import android.graphics.BitmapFactory
-import android.util.Base64
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -43,12 +41,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   top.addView(logo);top.addView(sub);top.addView(Space(this),LinearLayout.LayoutParams(0,1,1f));top.addView(stars);top.addView(Space(this),LinearLayout.LayoutParams(dp(8),1));top.addView(dress)
   val stage=FrameLayout(this).apply{background=shape(Color.rgb(255,234,243),30);clipToOutline=true}
   pika=ImageView(this).apply{
-   val decoded = runCatching {
-    val encoded = resources.openRawResource(R.raw.lumi_character_base64).bufferedReader().use { it.readText() }
-    val bytes = Base64.decode(encoded.trim(), Base64.DEFAULT)
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-   }.getOrNull()
-   if (decoded != null && decoded.width > 0 && decoded.height > 0) setImageBitmap(decoded) else setImageResource(R.drawable.lumi_chibi)
+   setImageResource(R.drawable.lumi_chibi)
    scaleType=ImageView.ScaleType.FIT_CENTER;contentDescription="Lumi"
   }
   stage.addView(pika,FrameLayout.LayoutParams(-1,-1))
