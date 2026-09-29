@@ -123,7 +123,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   ObjectAnimator.ofFloat(pika,View.TRANSLATION_Y,0f,-dp(5).toFloat(),0f).apply{duration=3000;repeatCount=ObjectAnimator.INFINITE;start()}
  }
  private fun offlineListen(){
-  if(!offline||listeningOffline||android.os.Build.VERSION.SDK_INT<31||!SpeechRecognizer.isOnDeviceRecognitionAvailable(this))return
+  if(!offline||listeningOffline||isFinishing||android.os.Build.VERSION.SDK_INT<31||!SpeechRecognizer.isOnDeviceRecognitionAvailable(this))return
   if(recognizer==null){
    recognizer=SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
    recognizer?.setRecognitionListener(object:RecognitionListener{
@@ -132,8 +132,9 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
     override fun onRmsChanged(rmsdB:Float){}
     override fun onBufferReceived(buffer:ByteArray?){}
     override fun onEndOfSpeech(){}
-    override fun onError(error:Int){listeningOffline=false;status.text="🌸 Tap a picture or say the answer"}
+    override fun onError(error:Int){if(!offline||!listeningOffline)return;listeningOffline=false;status.text="🌸 Tap a picture or say the answer"}
     override fun onResults(results:Bundle?){
+     if(!offline||!listeningOffline)return
      listeningOffline=false
      val words=results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
      if(words.contains(expectedAnswer,true))offlineAnswer(true)
@@ -145,7 +146,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   }
   listeningOffline=true
   val intent=Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE,"en-US").putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM).putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS,false)
-  recognizer?.startListening(intent)
+  runCatching{recognizer?.startListening(intent)}.onFailure{listeningOffline=false;status.text="🌸 Tap a picture to answer"}
  }
  private fun offlineAnswer(good:Boolean){
   listeningOffline=false
@@ -200,10 +201,10 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  }
  private fun startVoice(){mic.animate().scaleX(.9f).scaleY(.9f).setDuration(100).withEndAction{mic.animate().scaleX(1f).scaleY(1f).duration=140}.start();if(ActivityCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)connectGemini() else ActivityCompat.requestPermissions(this,arrayOf(Manifest.permission.RECORD_AUDIO),7)}
  override fun onRequestPermissionsResult(r:Int,p:Array<out String>,g:IntArray){super.onRequestPermissionsResult(r,p,g);if(r==7&&g.firstOrNull()==PackageManager.PERMISSION_GRANTED)connectGemini()}
- override fun onStatus(t:String)=runOnUiThread{status.text=t}
- override fun onUserTranscript(t:String)=runOnUiThread{if(t.isNotBlank()&&android.os.SystemClock.elapsedRealtime()-lastStarAwardMs>2500){lastStarAwardMs=android.os.SystemClock.elapsedRealtime();score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score"}}
+ override fun onStatus(t:String)=runOnUiThread{if(!offline&&!isFinishing)status.text=t}
+ override fun onUserTranscript(t:String)=runOnUiThread{if(!offline&&!isFinishing&&t.isNotBlank()&&android.os.SystemClock.elapsedRealtime()-lastStarAwardMs>2500){lastStarAwardMs=android.os.SystemClock.elapsedRealtime();score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score"}}
  override fun onPikaTranscript(t:String)=Unit
- override fun onSpeaking(a:Boolean,l:Float)=runOnUiThread{status.text=if(a)"Lumi is speaking…" else "I'm listening…";mouth.animate().cancel();if(a){mouth.alpha=.88f;mouth.animate().scaleY(1.8f).setDuration(120).withEndAction{mouth.animate().scaleY(.65f).setDuration(120).start()}.start()}else{mouth.alpha=0f;mouth.scaleY=1f}}
+ override fun onSpeaking(a:Boolean,l:Float)=runOnUiThread{if(offline||isFinishing)return@runOnUiThread;status.text=if(a)"Lumi is speaking…" else "I'm listening…";mouth.animate().cancel();if(a){mouth.alpha=.88f;mouth.animate().scaleY(1.8f).setDuration(120).withEndAction{mouth.animate().scaleY(.65f).setDuration(120).start()}.start()}else{mouth.alpha=0f;mouth.scaleY=1f}}
  override fun onReady(r:Boolean)=runOnUiThread{if(r){offline=false;answerRow.visibility=View.GONE;status.text="🟢 Connected · Lumi is listening";bubble.visibility=View.GONE}}
  override fun onError(t:String)=runOnUiThread{geminiFailureMessage=t.take(150);if(!offline)fallback();status.text="⚠ Gemini: $geminiFailureMessage";Toast.makeText(this,"Gemini: $geminiFailureMessage",Toast.LENGTH_LONG).show()}
  private fun blinkLoop(){eyeL.postDelayed(object:Runnable{override fun run(){eyeL.alpha=.92f;eyeR.alpha=.92f;eyeL.postDelayed({eyeL.alpha=0f;eyeR.alpha=0f},130);eyeL.postDelayed(this,3200)}},1800)}
