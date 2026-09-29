@@ -122,8 +122,9 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   if(j.has("setupComplete")||j.has("setup_complete")){
    connecting=false;connected=true
    timeout?.let{main.removeCallbacks(it)};timeout=null
-   listener.onReady(true)
    startMic()
+   if(!connected)return
+   listener.onReady(true)
    val greetingPart=JSONObject().put("text","Say only: Hi, friend! [pause] Want to play with me? Speak slowly, warmly and naturally.")
    val greetingTurn=JSONObject().put("role","user").put("parts",JSONArray().put(greetingPart))
    val hello=JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(greetingTurn)).put("turnComplete",true))
@@ -150,17 +151,21 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
    synchronized(audioQueue){
     if(!playingAudio){
      playingAudio=true
+     val workerEpoch=sessionEpoch
      audioWorker=thread(name="gemini-audio",isDaemon=true){
+      var localTrack:AudioTrack?=null
       try{
        val min=AudioTrack.getMinBufferSize(outputRate,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT)
        val track=AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
         .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(outputRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
         .setBufferSizeInBytes(maxOf(min,24000)).setTransferMode(AudioTrack.MODE_STREAM).build()
+       localTrack=track
+       if(workerEpoch!=sessionEpoch){track.release();localTrack=null;return@thread}
        player=track
        track.play()
        var framesWritten=0L
        var frameBase=track.playbackHeadPosition.toLong() and 0xffffffffL
-       while(playingAudio){
+       while(playingAudio && workerEpoch==sessionEpoch){
         if(playbackResetRequested){
          playbackResetRequested=false
          track.pause()
@@ -173,7 +178,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
         if(chunk!=null){
          val generation=audioGeneration
          var offset=0
-         while(offset<chunk.size && playingAudio && generation==audioGeneration){
+         while(offset<chunk.size && playingAudio && workerEpoch==sessionEpoch && generation==audioGeneration){
           val n=track.write(chunk,offset,chunk.size-offset)
           if(n<=0)throw IllegalStateException("AudioTrack write failed: $n")
           offset+=n
@@ -193,11 +198,11 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
         }
        }
       }catch(_:InterruptedException){}catch(e:Exception){
-       if(!intentionalClose && !playbackErrorReported){playbackErrorReported=true;main.post{fail("Audio playback failed: "+(e.message?:"device audio error").take(90))}}
+       if(workerEpoch==sessionEpoch && !intentionalClose && !playbackErrorReported){playbackErrorReported=true;main.post{if(workerEpoch==sessionEpoch)fail("Audio playback failed: "+(e.message?:"device audio error").take(90))}}
       }finally{
-       try{player?.stop()}catch(_:Exception){}
-       try{player?.release()}catch(_:Exception){}
-       player=null
+       try{localTrack?.stop()}catch(_:Exception){}
+       try{localTrack?.release()}catch(_:Exception){}
+       if(player===localTrack)player=null
       }
      }
     }
