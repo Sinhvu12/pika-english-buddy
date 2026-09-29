@@ -37,6 +37,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
  @Volatile private var assistantSpeaking=false
  @Volatile private var playingAudio=false
  private var audioWorker:Thread?=null
+ @Volatile private var micWorker:Thread?=null
  @Volatile private var lastSpeakingNotification=false
  @Volatile private var sessionEpoch=0
  @Volatile private var playbackErrorReported=false
@@ -99,14 +100,20 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
    if(recorder?.recordingState!=AudioRecord.RECORDSTATE_RECORDING)throw IllegalStateException("Microphone did not start")
    recording=true
    listener.onStatus("Listening…")
-   thread(name="gemini-mic"){
+   val activeRecorder=recorder ?: throw IllegalStateException("Microphone missing")
+   val micEpoch=sessionEpoch
+   micWorker=thread(name="gemini-mic"){
     val buf=ByteArray(3200)
-    while(recording){
-     val n=try{recorder?.read(buf,0,buf.size)?:-1}catch(_:Exception){-1}
-     if(n>0 && connected && !assistantSpeaking && android.os.SystemClock.elapsedRealtime()>=suppressMicUntil){
+    while(recording && micEpoch==sessionEpoch){
+     val n=try{activeRecorder.read(buf,0,buf.size)}catch(_:Exception){-1}
+     if(n>0 && connected && micEpoch==sessionEpoch && !assistantSpeaking && android.os.SystemClock.elapsedRealtime()>=suppressMicUntil){
       val audio=JSONObject().put("mimeType","audio/pcm;rate=16000").put("data",Base64.encodeToString(buf,0,n,Base64.NO_WRAP))
-      ws?.send(JSONObject().put("realtimeInput",JSONObject().put("audio",audio)).toString())
-     }else if(n<0){if(recording && !intentionalClose)main.post{fail("Microphone stopped unexpectedly")};break}
+      val socket=ws
+      if(socket!=null && socket.queueSize()<256_000L && !socket.send(JSONObject().put("realtimeInput",JSONObject().put("audio",audio)).toString())){
+       main.post{if(micEpoch==sessionEpoch)fail("Voice connection stopped sending audio")}
+       break
+      }
+     }else if(n<0){if(recording && micEpoch==sessionEpoch && !intentionalClose)main.post{if(micEpoch==sessionEpoch)fail("Microphone stopped unexpectedly")};break}
     }
    }
   }catch(e:Exception){fail("Microphone cannot start") }
@@ -206,11 +213,13 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   timeout?.let{main.removeCallbacks(it)};timeout=null
   recording=false;connected=false
   playingAudio=false;audioGeneration++;audioQueue.clear();playbackResetRequested=true;audioWorker?.interrupt();audioWorker=null
+  micWorker?.interrupt();micWorker=null
   assistantSpeaking=false
   lastSpeakingNotification=false
   listener.onSpeaking(false,0f)
-  try{recorder?.stop()}catch(_:Exception){}
-  recorder?.release();recorder=null
+  val oldRecorder=recorder;recorder=null
+  try{oldRecorder?.stop()}catch(_:Exception){}
+  try{oldRecorder?.release()}catch(_:Exception){}
   // The audio worker owns AudioTrack shutdown.
   ws?.close(1000,"bye");ws=null
  }
