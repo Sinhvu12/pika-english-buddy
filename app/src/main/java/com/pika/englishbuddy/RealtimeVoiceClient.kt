@@ -5,6 +5,9 @@ import okhttp3.*
 import org.json.JSONObject
 import org.json.JSONArray
 import kotlin.concurrent.thread
+import android.os.Handler
+import android.os.Looper
+import java.util.concurrent.TimeUnit
 
 class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener:Listener){
  interface Listener{
@@ -15,7 +18,12 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   fun onReady(ready:Boolean)
   fun onError(text:String)
  }
- private val http=OkHttpClient.Builder().build()
+ private val http=OkHttpClient.Builder().connectTimeout(10,TimeUnit.SECONDS).readTimeout(0,TimeUnit.SECONDS).build()
+ private val main=Handler(Looper.getMainLooper())
+ private var timeout:Runnable?=null
+ @Volatile private var intentionalClose=false
+ @Volatile private var connecting=false
+ @Volatile private var failed=false
  private var ws:WebSocket?=null
  private var recorder:AudioRecord?=null
  private var player:AudioTrack?=null
@@ -25,15 +33,26 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
  private val outputRate=24000
  fun connect(apiKey:String){
   if(apiKey.isBlank()){listener.onError("Enter your Gemini API key first.");return}
-  if(connected){close();listener.onStatus("Voice session ended.");return}
+  if(connected||connecting){close();listener.onStatus("Voice session ended.");return}
+  intentionalClose=false;failed=false;connecting=true
+  timeout?.let{main.removeCallbacks(it)}
+  timeout=Runnable{if(connecting&&!connected)fail("Connection timed out")}
+  main.postDelayed(timeout!!,15000)
   listener.onStatus("Connecting to Gemini Live…")
   val url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key="+apiKey.trim()
   ws=http.newWebSocket(Request.Builder().url(url).build(),object:WebSocketListener(){
    override fun onOpen(w:WebSocket,r:Response){configure(w)}
-   override fun onMessage(w:WebSocket,text:String){runCatching{handle(JSONObject(text))}.onFailure{listener.onError("Gemini audio response could not be decoded.")}}
-   override fun onFailure(w:WebSocket,t:Throwable,r:Response?){connected=false;recording=false;listener.onError("Gemini connection failed. Check the API key, network and free-tier quota.")}
-   override fun onClosed(w:WebSocket,code:Int,reason:String){connected=false;recording=false;listener.onReady(false)}
+   override fun onMessage(w:WebSocket,text:String){runCatching{handle(JSONObject(text))}.onFailure{fail("Gemini response error")}}
+   override fun onFailure(w:WebSocket,t:Throwable,r:Response?){if(!intentionalClose)fail("Gemini connection failed: "+(r?.code?.toString()?:t.javaClass.simpleName))}
+   override fun onClosed(w:WebSocket,code:Int,reason:String){if(!intentionalClose)fail("Gemini closed connection: $code $reason")}
   })
+ }
+ private fun fail(reason:String){
+  if(failed||intentionalClose)return
+  failed=true
+  timeout?.let{main.removeCallbacks(it)};timeout=null
+  listener.onError(reason)
+  close()
  }
  private fun configure(w:WebSocket){
   val prompt="You are Lumi, a cheerful English speaking companion for children. Speak naturally using short clear English, respond to what the child says, and ask one friendly follow-up question. Gently model correct grammar. Never ask for private information. Avoid unsafe topics."
@@ -65,12 +84,20 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
      }else if(n<0)break
     }
    }
-  }catch(e:Exception){listener.onError("Microphone cannot start. Check microphone permission.")}
+  }catch(e:Exception){fail("Microphone cannot start") }
  }
  private fun handle(j:JSONObject){
-  if(j.has("setupComplete")){connected=true;listener.onReady(true);startMic();return}
+  if(j.has("setupComplete")){
+   connecting=false;connected=true
+   timeout?.let{main.removeCallbacks(it)};timeout=null
+   listener.onReady(true)
+   startMic()
+   val hello=JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",JSONArray().put(JSONObject().put("text","Say a very short cheerful hello to the child in English, then invite them to speak.")))).put("turnComplete",true))
+   ws?.send(hello.toString())
+   return
+  }
   val error=j.optJSONObject("error")
-  if(error!=null){listener.onError(error.optString("message","Gemini API error"));return}
+  if(error!=null){fail(error.optString("message","Gemini API error"));return}
   val content=j.optJSONObject("serverContent")?:return
   content.optJSONObject("inputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onUserTranscript(it)}
   content.optJSONObject("outputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onPikaTranscript(it)}
@@ -94,6 +121,8 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   listener.onSpeaking(true,.5f)
  }
  fun close(){
+  intentionalClose=true;connecting=false
+  timeout?.let{main.removeCallbacks(it)};timeout=null
   recording=false;connected=false
   try{recorder?.stop()}catch(_:Exception){}
   recorder?.release();recorder=null
