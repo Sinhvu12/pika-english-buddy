@@ -49,6 +49,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  private var ttsReady=false
  private var recognizer:SpeechRecognizer?=null
  private var listeningOffline=false
+ private var geminiFailureMessage=""
  private var expectedAnswer=""
  private val pictures=mapOf("Yellow" to "☀️","Blue" to "🔵","Pink" to "🌸","Cat" to "🐱","Dog" to "🐶","Duck" to "🦆","Green" to "🌿","Red" to "🔴","Purple" to "🟣","Five" to "🖐️","Two" to "✌️","Ten" to "🙌")
  private val quiz=listOf(
@@ -185,7 +186,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   mic.postDelayed({if(offline&&!isFinishing)offlineListen()},1800)
  }
  private fun connectGemini(){
-  if(offline){offlineListen();return}
+  if(offline){offline=false;answerRow.visibility=View.GONE;recognizer?.cancel();listeningOffline=false;geminiFailureMessage="";status.text="Connecting to Gemini Live…"}
   if(sessionKey.isBlank())sessionKey=readParentKey()
   if(sessionKey.isNotBlank()){voice.connect(sessionKey);return}
   val keyInput=EditText(this).apply{hint="Gemini API key";inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD;setSingleLine(true);setPadding(dp(20),dp(12),dp(20),dp(12))}
@@ -198,7 +199,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  override fun onPikaTranscript(t:String)=runOnUiThread{if(t.isNotBlank()){bubble.alpha=0f;bubble.visibility=View.VISIBLE;bubble.text=t;bubble.animate().alpha(1f).setDuration(220).start()}}
  override fun onSpeaking(a:Boolean,l:Float)=runOnUiThread{status.text=if(a)"Lumi is speaking…" else "I'm listening…";mouth.animate().cancel();if(a){mouth.alpha=.88f;mouth.animate().scaleY(1.8f).setDuration(120).withEndAction{mouth.animate().scaleY(.65f).setDuration(120).start()}.start()}else{mouth.alpha=0f;mouth.scaleY=1f}}
  override fun onReady(r:Boolean)=runOnUiThread{if(r){offline=false;answerRow.visibility=View.GONE;status.text="🟢 Connected · Lumi is listening";bubble.visibility=View.VISIBLE;bubble.text="Hi! Let\u0027s speak English! 🌸"}}
- override fun onError(t:String)=runOnUiThread{if(!offline)fallback()}
+ override fun onError(t:String)=runOnUiThread{geminiFailureMessage=t.take(150);if(!offline)fallback();status.text="⚠ Gemini: $geminiFailureMessage";Toast.makeText(this,"Gemini: $geminiFailureMessage",Toast.LENGTH_LONG).show()}
  private fun blinkLoop(){eyeL.postDelayed(object:Runnable{override fun run(){eyeL.alpha=.92f;eyeR.alpha=.92f;eyeL.postDelayed({eyeL.alpha=0f;eyeR.alpha=0f},130);eyeL.postDelayed(this,3200)}},1800)}
  private fun wardrobe(){val need=intArrayOf(0,10,20,35,50);val a=arrayOf("🌸 Pink Princess  ✓","💙 Sky Blue  • 10 ⭐","💛 Sunny Yellow • 20 ⭐","🌿 Mint Green • 35 ⭐","💜 Purple Sparkle • 50 ⭐");android.app.AlertDialog.Builder(this).setTitle("Lumi's Wardrobe").setItems(a){_,i->Toast.makeText(this,if(score>=need[i])"Dress saved for Lumi 💗" else "Keep talking with Lumi to earn stars!",Toast.LENGTH_SHORT).show()}.setNegativeButton("Close",null).show()}
  override fun onDestroy(){offline=false;recognizer?.destroy();tts?.shutdown();voice.close();super.onDestroy()}
