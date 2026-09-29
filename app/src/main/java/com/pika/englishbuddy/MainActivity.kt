@@ -8,6 +8,13 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 import android.view.Gravity
 import android.view.View
 import android.view.Window
@@ -30,6 +37,27 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  private lateinit var eyeR:View
  private var score=0
  private var sessionKey:String=""
+ private val secretAlias="lumi_gemini_parent_key"
+ private fun secretKey():SecretKey{
+  val store=KeyStore.getInstance("AndroidKeyStore").apply{load(null)}
+  val old=store.getKey(secretAlias,null) as? SecretKey
+  if(old!=null)return old
+  val generator=KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore")
+  generator.init(KeyGenParameterSpec.Builder(secretAlias,KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
+  return generator.generateKey()
+ }
+ private fun saveParentKey(key:String){
+  val cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.ENCRYPT_MODE,secretKey())
+  val data=cipher.doFinal(key.toByteArray(Charsets.UTF_8))
+  getSharedPreferences("lumi_parent",MODE_PRIVATE).edit().putString("key_iv",Base64.encodeToString(cipher.iv,Base64.NO_WRAP)).putString("key_data",Base64.encodeToString(data,Base64.NO_WRAP)).apply()
+ }
+ private fun readParentKey():String=runCatching{
+  val prefs=getSharedPreferences("lumi_parent",MODE_PRIVATE)
+  val iv=Base64.decode(prefs.getString("key_iv",""),Base64.DEFAULT)
+  val data=Base64.decode(prefs.getString("key_data",""),Base64.DEFAULT)
+  val cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,secretKey(),GCMParameterSpec(128,iv))
+  String(cipher.doFinal(data),Charsets.UTF_8)
+ }.getOrDefault("")
  private fun dp(v:Int)=(v*resources.displayMetrics.density).toInt()
  private fun shape(c:Int,r:Int,stroke:Int=0,sc:Int=Color.TRANSPARENT)=GradientDrawable().apply{setColor(c);cornerRadius=dp(r).toFloat();if(stroke>0)setStroke(dp(stroke),sc)}
  override fun onCreate(b:Bundle?){super.onCreate(b);WindowCompat.setDecorFitsSystemWindows(window,false);window.statusBarColor=Color.TRANSPARENT;window.navigationBarColor=Color.rgb(255,244,248);score=getSharedPreferences("lumi",0).getInt("stars",0);ui();voice=RealtimeVoiceClient(BuildConfig.PIKA_TOKEN_URL,this)}
@@ -68,9 +96,10 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   ObjectAnimator.ofFloat(pika,View.TRANSLATION_Y,0f,-dp(5).toFloat(),0f).apply{duration=3000;repeatCount=ObjectAnimator.INFINITE;start()}
  }
  private fun connectGemini(){
+  if(sessionKey.isBlank())sessionKey=readParentKey()
   if(sessionKey.isNotBlank()){voice.connect(sessionKey);return}
   val keyInput=EditText(this).apply{hint="Gemini API key";inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD;setSingleLine(true);setPadding(dp(20),dp(12),dp(20),dp(12))}
-  android.app.AlertDialog.Builder(this).setTitle("Gemini Live · Free tier").setMessage("Paste your Gemini API key from Google AI Studio. The key is used for this session only and is not saved on the device.").setView(keyInput).setPositiveButton("Connect"){_,_->val k=keyInput.text.toString().trim();if(k.isNotBlank()){sessionKey=k;voice.connect(k)}else status.text="Enter a Gemini API key to connect."}.setNegativeButton("Cancel",null).show()
+  android.app.AlertDialog.Builder(this).setTitle("Gemini Live · Free tier").setMessage("Paste your Gemini API key from Google AI Studio. Parents only: enter the Gemini API key once. It will be encrypted using Android Keystore and reused automatically on this device.").setView(keyInput).setPositiveButton("Connect"){_,_->val k=keyInput.text.toString().trim();if(k.isNotBlank()){runCatching{saveParentKey(k)}.onFailure{status.text="Unable to securely save key.";return@setPositiveButton};sessionKey=k;voice.connect(k)}else status.text="Enter a Gemini API key to connect."}.setNegativeButton("Cancel",null).show()
  }
  private fun startVoice(){mic.animate().scaleX(.9f).scaleY(.9f).setDuration(100).withEndAction{mic.animate().scaleX(1f).scaleY(1f).duration=140}.start();if(ActivityCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)connectGemini() else ActivityCompat.requestPermissions(this,arrayOf(Manifest.permission.RECORD_AUDIO),7)}
  override fun onRequestPermissionsResult(r:Int,p:Array<out String>,g:IntArray){super.onRequestPermissionsResult(r,p,g);if(r==7&&g.firstOrNull()==PackageManager.PERMISSION_GRANTED)connectGemini()}
