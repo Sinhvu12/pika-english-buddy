@@ -9,6 +9,10 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
+import android.speech.SpeechRecognizer
+import android.speech.RecognizerIntent
+import android.speech.RecognitionListener
+import android.content.Intent
 import java.util.Locale
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -43,6 +47,10 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  private var questionIndex=0
  private var tts:TextToSpeech?=null
  private var ttsReady=false
+ private var recognizer:SpeechRecognizer?=null
+ private var listeningOffline=false
+ private var expectedAnswer=""
+ private val pictures=mapOf("Yellow" to "☀️","Blue" to "🔵","Pink" to "🌸","Cat" to "🐱","Dog" to "🐶","Duck" to "🦆","Green" to "🌿","Red" to "🔴","Purple" to "🟣","Five" to "🖐️","Two" to "✌️","Ten" to "🙌")
  private val quiz=listOf(
   "What color is the sun?" to arrayOf("Yellow","Blue","Pink"),
   "Which animal says meow?" to arrayOf("Cat","Dog","Duck"),
@@ -101,7 +109,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   stage.addView(bubble,FrameLayout.LayoutParams(-1,-2).apply{gravity=Gravity.TOP;setMargins(dp(20),dp(18),dp(20),0)});bubble.visibility=View.GONE
   status=TextView(this).apply{text="";textSize=14f;setTextColor(Color.rgb(119,76,98));gravity=Gravity.CENTER}
   mic=TextView(this).apply{text="🎙";textSize=38f;gravity=Gravity.CENTER;setTextColor(Color.WHITE);background=shape(Color.rgb(250,35,109),38);elevation=dp(8).toFloat();setOnClickListener{startVoice()}}
-  root.addView(top,LinearLayout.LayoutParams(-1,dp(58)))
+  root.addView(top,LinearLayout.LayoutParams(-1,dp(76)))
   root.addView(stage,LinearLayout.LayoutParams(-1,0,1f).apply{setMargins(0,dp(5),0,dp(10))})
   root.addView(status,LinearLayout.LayoutParams(-1,dp(32)))
   answerRow=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;visibility=View.GONE}
@@ -110,10 +118,47 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   root.addView(micRow,LinearLayout.LayoutParams(-1,dp(84)));setContentView(root)
   ObjectAnimator.ofFloat(pika,View.TRANSLATION_Y,0f,-dp(5).toFloat(),0f).apply{duration=3000;repeatCount=ObjectAnimator.INFINITE;start()}
  }
+ private fun offlineListen(){
+  if(!offline||listeningOffline||android.os.Build.VERSION.SDK_INT<31||!SpeechRecognizer.isOnDeviceRecognitionAvailable(this))return
+  if(recognizer==null){
+   recognizer=SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
+   recognizer?.setRecognitionListener(object:RecognitionListener{
+    override fun onReadyForSpeech(params:Bundle?){status.text="🎤 Speak!"}
+    override fun onBeginningOfSpeech(){}
+    override fun onRmsChanged(rmsdB:Float){}
+    override fun onBufferReceived(buffer:ByteArray?){}
+    override fun onEndOfSpeech(){}
+    override fun onError(error:Int){listeningOffline=false;status.text="🌸 Tap a picture or say the answer"}
+    override fun onResults(results:Bundle?){
+     listeningOffline=false
+     val words=results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+     if(words.contains(expectedAnswer,true))offlineAnswer(true)
+     else status.text="🌸 Try saying it again or tap a picture"
+    }
+    override fun onPartialResults(partialResults:Bundle?){}
+    override fun onEvent(eventType:Int,params:Bundle?){}
+   })
+  }
+  listeningOffline=true
+  val intent=Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE,"en-US").putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM).putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS,false)
+  recognizer?.startListening(intent)
+ }
+ private fun offlineAnswer(good:Boolean){
+  listeningOffline=false
+  recognizer?.cancel()
+  answerRow.visibility=View.GONE
+  val reply=if(good)"Great job! ⭐" else "Good try! 🌸"
+  if(good){score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score"}
+  bubble.text=reply
+  if(ttsReady)tts?.speak(reply,TextToSpeech.QUEUE_FLUSH,null,"answer")
+  questionIndex++
+  mic.postDelayed({if(!isFinishing&&offline)fallback()},1900)
+ }
  private fun fallback(){
   offline=true
   voice.close()
   val q=quiz[questionIndex%quiz.size]
+  expectedAnswer=q.second[0]
   bubble.visibility=View.VISIBLE
   bubble.text=q.first
   status.text="🌸 Let's play!"
@@ -122,30 +167,25 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   val options=q.second.withIndex().shuffled()
   for(item in options){
    val button=TextView(this).apply{
-    text=item.value
-    textSize=23f
+    text=pictures[item.value]?:item.value
+    contentDescription=item.value
+    textSize=48f
     gravity=Gravity.CENTER
     setTextColor(Color.rgb(111,39,85))
     setTypeface(typeface,Typeface.BOLD)
     background=shape(Color.WHITE,24,2,Color.rgb(255,169,204))
     setPadding(dp(14),dp(14),dp(14),dp(14))
     setOnClickListener{
-     answerRow.visibility=View.GONE
-     val good=item.index==0
-     val reply=if(good)"Great job! ⭐" else "Good try! 🌸"
-     if(good){score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score"}
-     bubble.text=reply
-     if(ttsReady)tts?.speak(reply,TextToSpeech.QUEUE_FLUSH,null,"answer")
-     questionIndex++
-     mic.postDelayed({if(!isFinishing&&offline)fallback()},1900)
+     offlineAnswer(item.index==0)
     }
    }
    answerRow.addView(button,LinearLayout.LayoutParams(-1,dp(58)).apply{setMargins(0,dp(4),0,dp(4))})
   }
   if(ttsReady)tts?.speak(q.first,TextToSpeech.QUEUE_FLUSH,null,"question")
+  mic.postDelayed({if(offline&&!isFinishing)offlineListen()},1800)
  }
  private fun connectGemini(){
-  if(offline){fallback();return}
+  if(offline){offlineListen();return}
   if(sessionKey.isBlank())sessionKey=readParentKey()
   if(sessionKey.isNotBlank()){voice.connect(sessionKey);return}
   val keyInput=EditText(this).apply{hint="Gemini API key";inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD;setSingleLine(true);setPadding(dp(20),dp(12),dp(20),dp(12))}
@@ -161,5 +201,5 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  override fun onError(t:String)=runOnUiThread{if(!offline)fallback()}
  private fun blinkLoop(){eyeL.postDelayed(object:Runnable{override fun run(){eyeL.alpha=.92f;eyeR.alpha=.92f;eyeL.postDelayed({eyeL.alpha=0f;eyeR.alpha=0f},130);eyeL.postDelayed(this,3200)}},1800)}
  private fun wardrobe(){val need=intArrayOf(0,10,20,35,50);val a=arrayOf("🌸 Pink Princess  ✓","💙 Sky Blue  • 10 ⭐","💛 Sunny Yellow • 20 ⭐","🌿 Mint Green • 35 ⭐","💜 Purple Sparkle • 50 ⭐");android.app.AlertDialog.Builder(this).setTitle("Lumi's Wardrobe").setItems(a){_,i->Toast.makeText(this,if(score>=need[i])"Dress saved for Lumi 💗" else "Keep talking with Lumi to earn stars!",Toast.LENGTH_SHORT).show()}.setNegativeButton("Close",null).show()}
- override fun onDestroy(){offline=false;tts?.shutdown();voice.close();super.onDestroy()}
+ override fun onDestroy(){offline=false;recognizer?.destroy();tts?.shutdown();voice.close();super.onDestroy()}
 }
