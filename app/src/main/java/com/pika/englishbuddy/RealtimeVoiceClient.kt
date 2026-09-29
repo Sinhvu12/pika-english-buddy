@@ -39,7 +39,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   val prompt="You are Lumi, a cheerful English speaking companion for children. Speak naturally using short clear English, respond to what the child says, and ask one friendly follow-up question. Gently model correct grammar. Never ask for private information. Avoid unsafe topics."
   val setup=JSONObject().put("model","models/gemini-2.5-flash-native-audio-preview-12-2025")
    .put("generationConfig",JSONObject().put("responseModalities",JSONArray().put("AUDIO"))
-    .put("speechConfig",JSONObject().put("voiceConfig",JSONObject().put("prebuiltVoiceConfig",JSONObject().put("voiceName","Aoede"))))
+    .put("speechConfig",JSONObject().put("voiceConfig",JSONObject().put("prebuiltVoiceConfig",JSONObject().put("voiceName","Aoede")))))
    .put("systemInstruction",JSONObject().put("parts",JSONArray().put(JSONObject().put("text",prompt))))
    .put("inputAudioTranscription",JSONObject())
    .put("outputAudioTranscription",JSONObject())
