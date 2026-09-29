@@ -29,6 +29,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  private lateinit var eyeL:View
  private lateinit var eyeR:View
  private var score=0
+ private var sessionKey:String=""
  private fun dp(v:Int)=(v*resources.displayMetrics.density).toInt()
  private fun shape(c:Int,r:Int,stroke:Int=0,sc:Int=Color.TRANSPARENT)=GradientDrawable().apply{setColor(c);cornerRadius=dp(r).toFloat();if(stroke>0)setStroke(dp(stroke),sc)}
  override fun onCreate(b:Bundle?){super.onCreate(b);WindowCompat.setDecorFitsSystemWindows(window,false);window.statusBarColor=Color.TRANSPARENT;window.navigationBarColor=Color.rgb(255,244,248);score=getSharedPreferences("lumi",0).getInt("stars",0);ui();voice=RealtimeVoiceClient(BuildConfig.PIKA_TOKEN_URL,this)}
@@ -66,14 +67,19 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   root.addView(micRow,LinearLayout.LayoutParams(-1,dp(84)));setContentView(root)
   ObjectAnimator.ofFloat(pika,View.TRANSLATION_Y,0f,-dp(5).toFloat(),0f).apply{duration=3000;repeatCount=ObjectAnimator.INFINITE;start()}
  }
- private fun startVoice(){mic.animate().scaleX(.9f).scaleY(.9f).setDuration(100).withEndAction{mic.animate().scaleX(1f).scaleY(1f).duration=140}.start();if(ActivityCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)voice.connect() else ActivityCompat.requestPermissions(this,arrayOf(Manifest.permission.RECORD_AUDIO),7)}
- override fun onRequestPermissionsResult(r:Int,p:Array<out String>,g:IntArray){super.onRequestPermissionsResult(r,p,g);if(r==7&&g.firstOrNull()==PackageManager.PERMISSION_GRANTED)voice.connect()}
+ private fun connectGemini(){
+  if(sessionKey.isNotBlank()){voice.connect(sessionKey);return}
+  val keyInput=EditText(this).apply{hint="Gemini API key";inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD;setSingleLine(true);setPadding(dp(20),dp(12),dp(20),dp(12))}
+  android.app.AlertDialog.Builder(this).setTitle("Gemini Live · Free tier").setMessage("Paste your Gemini API key from Google AI Studio. The key is used for this session only and is not saved on the device.").setView(keyInput).setPositiveButton("Connect"){_,_->val k=keyInput.text.toString().trim();if(k.isNotBlank()){sessionKey=k;voice.connect(k)}else status.text="Enter a Gemini API key to connect."}.setNegativeButton("Cancel",null).show()
+ }
+ private fun startVoice(){mic.animate().scaleX(.9f).scaleY(.9f).setDuration(100).withEndAction{mic.animate().scaleX(1f).scaleY(1f).duration=140}.start();if(ActivityCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)connectGemini() else ActivityCompat.requestPermissions(this,arrayOf(Manifest.permission.RECORD_AUDIO),7)}
+ override fun onRequestPermissionsResult(r:Int,p:Array<out String>,g:IntArray){super.onRequestPermissionsResult(r,p,g);if(r==7&&g.firstOrNull()==PackageManager.PERMISSION_GRANTED)connectGemini()}
  override fun onStatus(t:String)=runOnUiThread{status.text=t}
  override fun onUserTranscript(t:String)=runOnUiThread{if(t.isNotBlank()){score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score";bubble.visibility=View.VISIBLE;bubble.text=t}}
  override fun onPikaTranscript(t:String)=runOnUiThread{if(t.isNotBlank()){bubble.alpha=0f;bubble.visibility=View.VISIBLE;bubble.text=t;bubble.animate().alpha(1f).setDuration(220).start()}}
  override fun onSpeaking(a:Boolean,l:Float)=runOnUiThread{status.text=if(a)"Lumi is speaking…" else "I'm listening…";mouth.animate().cancel();if(a){mouth.alpha=.88f;mouth.animate().scaleY(1.8f).setDuration(120).withEndAction{mouth.animate().scaleY(.65f).setDuration(120).start()}.start()}else{mouth.alpha=0f;mouth.scaleY=1f}}
  override fun onReady(r:Boolean)=Unit
- override fun onError(t:String)=runOnUiThread{status.text=if(BuildConfig.PIKA_TOKEN_URL.contains("example.invalid"))"Voice will be connected in the final API step" else t}
+ override fun onError(t:String)=runOnUiThread{status.text=t}
  private fun blinkLoop(){eyeL.postDelayed(object:Runnable{override fun run(){eyeL.alpha=.92f;eyeR.alpha=.92f;eyeL.postDelayed({eyeL.alpha=0f;eyeR.alpha=0f},130);eyeL.postDelayed(this,3200)}},1800)}
  private fun wardrobe(){val need=intArrayOf(0,10,20,35,50);val a=arrayOf("🌸 Pink Princess  ✓","💙 Sky Blue  • 10 ⭐","💛 Sunny Yellow • 20 ⭐","🌿 Mint Green • 35 ⭐","💜 Purple Sparkle • 50 ⭐");android.app.AlertDialog.Builder(this).setTitle("Lumi's Wardrobe").setItems(a){_,i->Toast.makeText(this,if(score>=need[i])"Dress saved for Lumi 💗" else "Keep talking with Lumi to earn stars!",Toast.LENGTH_SHORT).show()}.setNegativeButton("Close",null).show()}
  override fun onDestroy(){voice.close();super.onDestroy()}
