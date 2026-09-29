@@ -1,5 +1,6 @@
 package com.pika.englishbuddy
 import android.media.*
+import android.media.audiofx.AcousticEchoCanceler
 import android.util.Base64
 import okhttp3.*
 import okio.ByteString
@@ -30,7 +31,10 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
  private var ws:WebSocket?=null
  private var recorder:AudioRecord?=null
  private var player:AudioTrack?=null
- private val audioQueue=LinkedBlockingQueue<ByteArray>(16)
+ private val audioQueue=LinkedBlockingQueue<ByteArray>()
+ @Volatile private var audioTurnEnded=false
+ @Volatile private var audioGeneration=0
+ private var echoCanceler:AcousticEchoCanceler?=null
  @Volatile private var playingAudio=false
  private var audioWorker:Thread?=null
  @Volatile private var recording=false
@@ -41,7 +45,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   if(apiKey.isBlank()){listener.onError("Enter your Gemini API key first.");return}
   if(connected||connecting){close();listener.onStatus("Voice session ended.");return}
   intentionalClose=false;failed=false;connecting=true;socketOpened=false
-  audioQueue.clear()
+  audioQueue.clear();audioTurnEnded=false
   timeout?.let{main.removeCallbacks(it)}
   timeout=Runnable{if(connecting&&!connected)fail(if(socketOpened)"Gemini WebSocket opened but setup was not confirmed within 30s" else "Could not open Gemini WebSocket within 30s; check network, VPN or firewall")}
   main.postDelayed(timeout!!,30000)
@@ -83,6 +87,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
    recorder=AudioRecord.Builder().setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
     .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(inputRate).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
     .setBufferSizeInBytes(maxOf(min,6400)).build()
+   recorder?.audioSessionId?.let{id->if(AcousticEchoCanceler.isAvailable())echoCanceler=AcousticEchoCanceler.create(id)?.also{it.enabled=true}}
    recorder?.startRecording()
    recording=true
    listener.onStatus("Listening…")
@@ -115,14 +120,14 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   val content=j.optJSONObject("serverContent")?:j.optJSONObject("server_content")?:return
   content.optJSONObject("inputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onUserTranscript(it)}
   content.optJSONObject("outputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onPikaTranscript(it)}
-  if(content.optBoolean("interrupted")){audioQueue.clear();listener.onSpeaking(false,0f)}
+  if(content.optBoolean("interrupted")){audioGeneration++;audioQueue.clear();audioTurnEnded=true;listener.onSpeaking(false,0f)}
   val parts=content.optJSONObject("modelTurn")?.optJSONArray("parts")
   if(parts!=null)for(i in 0 until parts.length()){
    val inline=parts.optJSONObject(i)?.optJSONObject("inlineData")?:continue
    val data=inline.optString("data")
    if(data.isNotBlank())play(Base64.decode(data,Base64.DEFAULT))
   }
-  if(content.optBoolean("turnComplete"))listener.onSpeaking(false,0f)
+  if(content.optBoolean("turnComplete"))audioTurnEnded=true
  }
  private fun play(bytes:ByteArray){
   if(!connected)return
@@ -139,8 +144,17 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
        player=track
        track.play()
        while(playingAudio){
-        val chunk=audioQueue.poll(400,TimeUnit.MILLISECONDS)?:continue
-        if(playingAudio)track.write(chunk,0,chunk.size)
+        val chunk=audioQueue.poll(80,TimeUnit.MILLISECONDS)
+        if(chunk==null){if(audioTurnEnded && audioQueue.isEmpty()){audioTurnEnded=false;listener.onSpeaking(false,0f)};continue}
+        if(playingAudio){
+         val generation=audioGeneration
+         var offset=0
+         while(offset<chunk.size && playingAudio && generation==audioGeneration){
+          val n=track.write(chunk,offset,chunk.size-offset)
+          if(n<=0)break
+          offset+=n
+         }
+        }
        }
       }catch(_:InterruptedException){}catch(_:Exception){}finally{
        try{player?.stop()}catch(_:Exception){}
@@ -151,17 +165,16 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
     }
    }
   }
-  if(!audioQueue.offer(bytes)){
-   audioQueue.poll()
-   audioQueue.offer(bytes)
-  }
+  audioTurnEnded=false
+  audioQueue.offer(bytes)
   listener.onSpeaking(true,.5f)
  }
  fun close(){
   intentionalClose=true;connecting=false
   timeout?.let{main.removeCallbacks(it)};timeout=null
   recording=false;connected=false
-  playingAudio=false;audioQueue.clear();audioWorker?.interrupt();audioWorker=null
+  playingAudio=false;audioGeneration++;audioQueue.clear();audioWorker?.interrupt();audioWorker=null
+  echoCanceler?.release();echoCanceler=null
   try{recorder?.stop()}catch(_:Exception){}
   recorder?.release();recorder=null
   // The audio worker owns AudioTrack shutdown.
