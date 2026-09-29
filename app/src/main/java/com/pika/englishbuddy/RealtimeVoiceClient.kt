@@ -2,6 +2,7 @@ package com.pika.englishbuddy
 import android.media.*
 import android.util.Base64
 import okhttp3.*
+import okio.ByteString
 import org.json.JSONObject
 import org.json.JSONArray
 import kotlin.concurrent.thread
@@ -43,11 +44,15 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   val url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key="+apiKey.trim()
   ws=http.newWebSocket(Request.Builder().url(url).build(),object:WebSocketListener(){
    override fun onOpen(w:WebSocket,r:Response){socketOpened=true;listener.onStatus("Gemini WebSocket open · waiting for session…");configure(w)}
-   override fun onMessage(w:WebSocket,text:String){runCatching{handle(JSONObject(text))}.onFailure{fail("Gemini response could not be decoded: "+it.javaClass.simpleName)}}
+   override fun onMessage(w:WebSocket,text:String){receive(text)}
+   override fun onMessage(w:WebSocket,bytes:ByteString){receive(bytes.utf8())}
    override fun onFailure(w:WebSocket,t:Throwable,r:Response?){if(!intentionalClose)fail("Gemini handshake failed: "+(r?.code?.toString()?:t.javaClass.simpleName)+" "+(t.message?:"").take(90))}
    override fun onClosed(w:WebSocket,code:Int,reason:String){if(!intentionalClose)fail("Gemini closed connection: $code $reason")}
    override fun onClosing(w:WebSocket,code:Int,reason:String){if(!intentionalClose)fail("Gemini rejected session: $code $reason")}
   })
+ }
+ private fun receive(payload:String){
+  runCatching{handle(JSONObject(payload))}.onFailure{fail("Gemini message parse error: "+it.javaClass.simpleName)}
  }
  private fun fail(reason:String){
   if(failed||intentionalClose)return
@@ -89,7 +94,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   }catch(e:Exception){fail("Microphone cannot start") }
  }
  private fun handle(j:JSONObject){
-  if(j.has("setupComplete")){
+  if(j.has("setupComplete")||j.has("setup_complete")){
    connecting=false;connected=true
    timeout?.let{main.removeCallbacks(it)};timeout=null
    listener.onReady(true)
@@ -102,7 +107,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   }
   val error=j.optJSONObject("error")
   if(error!=null){fail(error.optString("message","Gemini API error"));return}
-  val content=j.optJSONObject("serverContent")?:return
+  val content=j.optJSONObject("serverContent")?:j.optJSONObject("server_content")?:return
   content.optJSONObject("inputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onUserTranscript(it)}
   content.optJSONObject("outputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onPikaTranscript(it)}
   if(content.optBoolean("interrupted")){player?.pause();player?.flush();player?.play();listener.onSpeaking(false,0f)}
