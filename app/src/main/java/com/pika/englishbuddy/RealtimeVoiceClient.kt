@@ -62,10 +62,10 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   close()
  }
  private fun configure(w:WebSocket){
-  val prompt="You are Lumi, a cheerful English speaking companion for children. Speak naturally using short clear English, respond to what the child says, and ask one friendly follow-up question. Gently model correct grammar. Never ask for private information. Avoid unsafe topics."
+  val prompt="You are Lumi, a cheerful English speaking companion for children. Speak to a five-year-old beginner in a warm, playful, expressive and natural voice. Speak noticeably slowly, about 80 to 95 words per minute, with gentle pauses between short sentences. Use at most one short sentence at a time, usually three to seven simple words. Wait patiently for the child to answer. Respond to what the child says and ask only one very easy follow-up question. Do not spell out words or read on-screen text. Avoid a robotic, rushed or sing-song delivery. Gently model correct grammar. Never ask for private information. Avoid unsafe topics."
   val setup=JSONObject().put("model","models/gemini-2.5-flash-native-audio-preview-12-2025")
    .put("generationConfig",JSONObject().put("responseModalities",JSONArray().put("AUDIO"))
-    .put("speechConfig",JSONObject().put("voiceConfig",JSONObject().put("prebuiltVoiceConfig",JSONObject().put("voiceName","Aoede")))))
+    .put("speechConfig",JSONObject().put("voiceConfig",JSONObject().put("prebuiltVoiceConfig",JSONObject().put("voiceName","Leda")))))
    .put("systemInstruction",JSONObject().put("parts",JSONArray().put(JSONObject().put("text",prompt))))
    .put("inputAudioTranscription",JSONObject())
    .put("outputAudioTranscription",JSONObject())
@@ -99,7 +99,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
    timeout?.let{main.removeCallbacks(it)};timeout=null
    listener.onReady(true)
    startMic()
-   val greetingPart=JSONObject().put("text","Say a short cheerful hello to the child in English, then invite them to speak.")
+   val greetingPart=JSONObject().put("text","Say only: Hi, little friend! [pause] What is your name? Speak slowly and warmly.")
    val greetingTurn=JSONObject().put("role","user").put("parts",JSONArray().put(greetingPart))
    val hello=JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(greetingTurn)).put("turnComplete",true))
    ws?.send(hello.toString())
