@@ -43,9 +43,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  private lateinit var mic:TextView
  private lateinit var answerRow:LinearLayout
  private lateinit var pika:ImageView
- private var originalLumi:Bitmap?=null
  private var selectedDress=0
- private val dressColors=intArrayOf(0xFFF68DB6.toInt(),0xFF64B7F4.toInt(),0xFFF8CD4B.toInt(),0xFF70CFA4.toInt(),0xFFB18DE9.toInt())
  private lateinit var mouth:View
  private lateinit var eyeL:View
  private lateinit var eyeR:View
@@ -215,7 +213,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
    2->R.drawable.lumi_dress_sunny
    3->R.drawable.lumi_dress_mint
    4->R.drawable.lumi_dress_purple
-   else->R.drawable.lumi_chibi
+   else->R.drawable.lumi_dress_pink
   }
   pika.setImageResource(outfit)
  }
