@@ -51,6 +51,8 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  private var score=0
  private var offline=false
  private var questionIndex=0
+ private var lastStarAwardMs=0L
+ private var quizGeneration=0
  private var tts:TextToSpeech?=null
  private var ttsReady=false
  private var recognizer:SpeechRecognizer?=null
@@ -187,7 +189,8 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   bubble.text=reply
   if(ttsReady)tts?.speak(reply,TextToSpeech.QUEUE_FLUSH,null,"answer")
   questionIndex++
-  mic.postDelayed({if(!isFinishing&&offline)fallback()},1900)
+  val nextQuestion=questionIndex
+  mic.postDelayed({if(!isFinishing&&offline&&questionIndex==nextQuestion)fallback()},1900)
  }
  private fun fallback(){
   offline=true
@@ -200,6 +203,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   answerRow.removeAllViews()
   answerRow.visibility=View.VISIBLE
   val options=q.second.withIndex().shuffled()
+  val thisQuiz=++quizGeneration
   for(item in options){
    val button=TextView(this).apply{
     text=pictures[item.value]?:item.value
@@ -212,16 +216,16 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
     background=shape(Color.WHITE,24,2,Color.rgb(255,169,204))
     setPadding(dp(6),dp(2),dp(6),dp(2))
     setOnClickListener{
-     offlineAnswer(item.index==0)
+     if(offline && thisQuiz==quizGeneration){quizGeneration++;offlineAnswer(item.index==0)}
     }
    }
    answerRow.addView(button,LinearLayout.LayoutParams(-1,dp(90)).apply{setMargins(0,dp(3),0,dp(3))})
   }
   if(ttsReady)tts?.speak(q.first,TextToSpeech.QUEUE_FLUSH,null,"question")
-  mic.postDelayed({if(offline&&!isFinishing)offlineListen()},1800)
+  mic.postDelayed({if(offline&&!isFinishing&&quizGeneration==thisQuiz)offlineListen()},1800)
  }
  private fun connectGemini(){
-  if(offline){offline=false;answerRow.visibility=View.GONE;recognizer?.cancel();listeningOffline=false;geminiFailureMessage="";status.text="Connecting to Gemini Live…"}
+  if(offline){offline=false;quizGeneration++;answerRow.visibility=View.GONE;recognizer?.cancel();listeningOffline=false;geminiFailureMessage="";status.text="Connecting to Gemini Live…"}
   if(sessionKey.isBlank())sessionKey=readParentKey()
   if(sessionKey.isNotBlank()){voice.connect(sessionKey);return}
   val keyInput=EditText(this).apply{hint="Gemini API key";inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD;setSingleLine(true);setPadding(dp(20),dp(12),dp(20),dp(12))}
@@ -230,7 +234,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  private fun startVoice(){mic.animate().scaleX(.9f).scaleY(.9f).setDuration(100).withEndAction{mic.animate().scaleX(1f).scaleY(1f).duration=140}.start();if(ActivityCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)connectGemini() else ActivityCompat.requestPermissions(this,arrayOf(Manifest.permission.RECORD_AUDIO),7)}
  override fun onRequestPermissionsResult(r:Int,p:Array<out String>,g:IntArray){super.onRequestPermissionsResult(r,p,g);if(r==7&&g.firstOrNull()==PackageManager.PERMISSION_GRANTED)connectGemini()}
  override fun onStatus(t:String)=runOnUiThread{status.text=t}
- override fun onUserTranscript(t:String)=runOnUiThread{if(t.isNotBlank()){score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score"}}
+ override fun onUserTranscript(t:String)=runOnUiThread{if(t.isNotBlank()&&android.os.SystemClock.elapsedRealtime()-lastStarAwardMs>2500){lastStarAwardMs=android.os.SystemClock.elapsedRealtime();score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score"}}
  override fun onPikaTranscript(t:String)=Unit
  override fun onSpeaking(a:Boolean,l:Float)=runOnUiThread{status.text=if(a)"Lumi is speaking…" else "I'm listening…";mouth.animate().cancel();if(a){mouth.alpha=.88f;mouth.animate().scaleY(1.8f).setDuration(120).withEndAction{mouth.animate().scaleY(.65f).setDuration(120).start()}.start()}else{mouth.alpha=0f;mouth.scaleY=1f}}
  override fun onReady(r:Boolean)=runOnUiThread{if(r){offline=false;answerRow.visibility=View.GONE;status.text="🟢 Connected · Lumi is listening";bubble.visibility=View.GONE}}
