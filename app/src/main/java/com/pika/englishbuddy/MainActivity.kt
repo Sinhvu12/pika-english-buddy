@@ -33,6 +33,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  private lateinit var bubble:TextView
  private lateinit var stars:TextView
  private lateinit var mic:TextView
+ private lateinit var answerRow:LinearLayout
  private lateinit var pika:ImageView
  private lateinit var mouth:View
  private lateinit var eyeL:View
@@ -103,6 +104,8 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   root.addView(top,LinearLayout.LayoutParams(-1,dp(58)))
   root.addView(stage,LinearLayout.LayoutParams(-1,0,1f).apply{setMargins(0,dp(5),0,dp(10))})
   root.addView(status,LinearLayout.LayoutParams(-1,dp(32)))
+  answerRow=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;visibility=View.GONE}
+  root.addView(answerRow,LinearLayout.LayoutParams(-1,-2))
   val micRow=FrameLayout(this);micRow.addView(mic,FrameLayout.LayoutParams(dp(76),dp(76),Gravity.CENTER))
   root.addView(micRow,LinearLayout.LayoutParams(-1,dp(84)));setContentView(root)
   ObjectAnimator.ofFloat(pika,View.TRANSLATION_Y,0f,-dp(5).toFloat(),0f).apply{duration=3000;repeatCount=ObjectAnimator.INFINITE;start()}
@@ -113,17 +116,33 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   val q=quiz[questionIndex%quiz.size]
   bubble.visibility=View.VISIBLE
   bubble.text=q.first
-  status.text="🌸 Lumi English Game · Offline mode"
+  status.text="🌸 Let's play!"
+  answerRow.removeAllViews()
+  answerRow.visibility=View.VISIBLE
+  val options=q.second.withIndex().shuffled()
+  for(item in options){
+   val button=TextView(this).apply{
+    text=item.value
+    textSize=23f
+    gravity=Gravity.CENTER
+    setTextColor(Color.rgb(111,39,85))
+    setTypeface(typeface,Typeface.BOLD)
+    background=shape(Color.WHITE,24,2,Color.rgb(255,169,204))
+    setPadding(dp(14),dp(14),dp(14),dp(14))
+    setOnClickListener{
+     answerRow.visibility=View.GONE
+     val good=item.index==0
+     val reply=if(good)"Great job! ⭐" else "Good try! 🌸"
+     if(good){score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score"}
+     bubble.text=reply
+     if(ttsReady)tts?.speak(reply,TextToSpeech.QUEUE_FLUSH,null,"answer")
+     questionIndex++
+     mic.postDelayed({if(!isFinishing&&offline)fallback()},1900)
+    }
+   }
+   answerRow.addView(button,LinearLayout.LayoutParams(-1,dp(58)).apply{setMargins(0,dp(4),0,dp(4))})
+  }
   if(ttsReady)tts?.speak(q.first,TextToSpeech.QUEUE_FLUSH,null,"question")
-  android.app.AlertDialog.Builder(this).setTitle("Lumi English Game").setMessage(q.first)
-   .setItems(q.second){_,index->
-    val answer=if(index==0)"Great job!" else "Good try!"
-    if(index==0){score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score"}
-    bubble.text=answer
-    if(ttsReady)tts?.speak(answer,TextToSpeech.QUEUE_FLUSH,null,"answer")
-    questionIndex++
-    mic.postDelayed({if(!isFinishing&&offline)fallback()},1700)
-   }.setNegativeButton("Stop"){_,_->offline=false}.show()
  }
  private fun connectGemini(){
   if(offline){fallback();return}
@@ -138,7 +157,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  override fun onUserTranscript(t:String)=runOnUiThread{if(t.isNotBlank()){score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score";bubble.visibility=View.VISIBLE;bubble.text=t}}
  override fun onPikaTranscript(t:String)=runOnUiThread{if(t.isNotBlank()){bubble.alpha=0f;bubble.visibility=View.VISIBLE;bubble.text=t;bubble.animate().alpha(1f).setDuration(220).start()}}
  override fun onSpeaking(a:Boolean,l:Float)=runOnUiThread{status.text=if(a)"Lumi is speaking…" else "I'm listening…";mouth.animate().cancel();if(a){mouth.alpha=.88f;mouth.animate().scaleY(1.8f).setDuration(120).withEndAction{mouth.animate().scaleY(.65f).setDuration(120).start()}.start()}else{mouth.alpha=0f;mouth.scaleY=1f}}
- override fun onReady(r:Boolean)=runOnUiThread{if(r){offline=false;status.text="🟢 Connected · Lumi is listening";bubble.visibility=View.VISIBLE;bubble.text="Hi! Let\u0027s speak English! 🌸"}}
+ override fun onReady(r:Boolean)=runOnUiThread{if(r){offline=false;answerRow.visibility=View.GONE;status.text="🟢 Connected · Lumi is listening";bubble.visibility=View.VISIBLE;bubble.text="Hi! Let\u0027s speak English! 🌸"}}
  override fun onError(t:String)=runOnUiThread{if(!offline)fallback()}
  private fun blinkLoop(){eyeL.postDelayed(object:Runnable{override fun run(){eyeL.alpha=.92f;eyeR.alpha=.92f;eyeL.postDelayed({eyeL.alpha=0f;eyeR.alpha=0f},130);eyeL.postDelayed(this,3200)}},1800)}
  private fun wardrobe(){val need=intArrayOf(0,10,20,35,50);val a=arrayOf("🌸 Pink Princess  ✓","💙 Sky Blue  • 10 ⭐","💛 Sunny Yellow • 20 ⭐","🌿 Mint Green • 35 ⭐","💜 Purple Sparkle • 50 ⭐");android.app.AlertDialog.Builder(this).setTitle("Lumi's Wardrobe").setItems(a){_,i->Toast.makeText(this,if(score>=need[i])"Dress saved for Lumi 💗" else "Keep talking with Lumi to earn stars!",Toast.LENGTH_SHORT).show()}.setNegativeButton("Close",null).show()}
