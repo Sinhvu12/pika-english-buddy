@@ -128,7 +128,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
    val greetingPart=JSONObject().put("text","Say only: Hi, friend! [pause] Want to play with me? Speak slowly, warmly and naturally.")
    val greetingTurn=JSONObject().put("role","user").put("parts",JSONArray().put(greetingPart))
    val hello=JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(greetingTurn)).put("turnComplete",true))
-   ws?.send(hello.toString())
+   if(ws?.send(hello.toString())!=true)fail("Could not start the voice conversation")
    return
   }
   val error=j.optJSONObject("error")
@@ -156,10 +156,12 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
       var localTrack:AudioTrack?=null
       try{
        val min=AudioTrack.getMinBufferSize(outputRate,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT)
+       if(min<=0)throw IllegalStateException("Unsupported speaker format")
        val track=AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
         .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(outputRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
         .setBufferSizeInBytes(maxOf(min,24000)).setTransferMode(AudioTrack.MODE_STREAM).build()
        localTrack=track
+       if(track.state!=AudioTrack.STATE_INITIALIZED)throw IllegalStateException("Speaker unavailable")
        if(workerEpoch!=sessionEpoch){track.release();localTrack=null;return@thread}
        player=track
        track.play()
@@ -210,6 +212,11 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   }
   audioTurnEnded=false
   assistantSpeaking=true
+  // Do not silently accumulate minutes of stale speech if the device cannot play fast enough.
+  if(audioQueue.size>=80){
+   fail("Audio playback is too far behind; please reconnect")
+   return
+  }
   audioQueue.offer(bytes)
   if(!lastSpeakingNotification){lastSpeakingNotification=true;listener.onSpeaking(true,.5f)}
  }
