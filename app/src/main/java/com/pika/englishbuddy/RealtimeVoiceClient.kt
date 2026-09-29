@@ -9,6 +9,7 @@ import kotlin.concurrent.thread
 import android.os.Handler
 import android.os.Looper
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.LinkedBlockingQueue
 
 class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener:Listener){
  interface Listener{
@@ -29,6 +30,9 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
  private var ws:WebSocket?=null
  private var recorder:AudioRecord?=null
  private var player:AudioTrack?=null
+ private val audioQueue=LinkedBlockingQueue<ByteArray>(16)
+ @Volatile private var playingAudio=false
+ private var audioWorker:Thread?=null
  @Volatile private var recording=false
  @Volatile private var connected=false
  private val inputRate=16000
@@ -37,6 +41,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   if(apiKey.isBlank()){listener.onError("Enter your Gemini API key first.");return}
   if(connected||connecting){close();listener.onStatus("Voice session ended.");return}
   intentionalClose=false;failed=false;connecting=true;socketOpened=false
+  audioQueue.clear()
   timeout?.let{main.removeCallbacks(it)}
   timeout=Runnable{if(connecting&&!connected)fail(if(socketOpened)"Gemini WebSocket opened but setup was not confirmed within 30s" else "Could not open Gemini WebSocket within 30s; check network, VPN or firewall")}
   main.postDelayed(timeout!!,30000)
@@ -110,7 +115,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   val content=j.optJSONObject("serverContent")?:j.optJSONObject("server_content")?:return
   content.optJSONObject("inputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onUserTranscript(it)}
   content.optJSONObject("outputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onPikaTranscript(it)}
-  if(content.optBoolean("interrupted")){player?.pause();player?.flush();player?.play();listener.onSpeaking(false,0f)}
+  if(content.optBoolean("interrupted")){audioQueue.clear();listener.onSpeaking(false,0f)}
   val parts=content.optJSONObject("modelTurn")?.optJSONArray("parts")
   if(parts!=null)for(i in 0 until parts.length()){
    val inline=parts.optJSONObject(i)?.optJSONObject("inlineData")?:continue
@@ -120,22 +125,46 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   if(content.optBoolean("turnComplete"))listener.onSpeaking(false,0f)
  }
  private fun play(bytes:ByteArray){
-  if(player==null){
-   val min=AudioTrack.getMinBufferSize(outputRate,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT)
-   player=AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-    .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(outputRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-    .setBufferSizeInBytes(maxOf(min,48000)).setTransferMode(AudioTrack.MODE_STREAM).build().also{it.play()}
+  if(!connected)return
+  if(!playingAudio){
+   synchronized(audioQueue){
+    if(!playingAudio){
+     playingAudio=true
+     audioWorker=thread(name="gemini-audio",isDaemon=true){
+      try{
+       val min=AudioTrack.getMinBufferSize(outputRate,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT)
+       val track=AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+        .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(outputRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+        .setBufferSizeInBytes(maxOf(min,24000)).setTransferMode(AudioTrack.MODE_STREAM).build()
+       player=track
+       track.play()
+       while(playingAudio){
+        val chunk=audioQueue.poll(400,TimeUnit.MILLISECONDS)?:continue
+        if(playingAudio)track.write(chunk,0,chunk.size)
+       }
+      }catch(_:InterruptedException){}catch(_:Exception){}finally{
+       try{player?.stop()}catch(_:Exception){}
+       try{player?.release()}catch(_:Exception){}
+       player=null
+      }
+     }
+    }
+   }
   }
-  player?.write(bytes,0,bytes.size)
+  if(!audioQueue.offer(bytes)){
+   audioQueue.poll()
+   audioQueue.offer(bytes)
+  }
   listener.onSpeaking(true,.5f)
  }
  fun close(){
   intentionalClose=true;connecting=false
   timeout?.let{main.removeCallbacks(it)};timeout=null
   recording=false;connected=false
+  playingAudio=false;audioQueue.clear();audioWorker?.interrupt();audioWorker=null
   try{recorder?.stop()}catch(_:Exception){}
   recorder?.release();recorder=null
-  player?.stop();player?.release();player=null
+  // The audio worker owns AudioTrack shutdown.
   ws?.close(1000,"bye");ws=null
  }
 }
