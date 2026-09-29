@@ -47,7 +47,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
  fun connect(apiKey:String){
   if(apiKey.isBlank()){listener.onError("Enter your Gemini API key first.");return}
   if(connected||connecting){close();listener.onStatus("Voice session ended.");return}
-  intentionalClose=false;failed=false;connecting=true;socketOpened=false;sessionEpoch++
+  intentionalClose=false;failed=false;connecting=true;socketOpened=false;playbackErrorReported=false;sessionEpoch++
   val epoch=sessionEpoch
   audioQueue.clear();audioTurnEnded=false;assistantSpeaking=false;suppressMicUntil=0L;playbackResetRequested=false
   timeout?.let{main.removeCallbacks(it)}
@@ -60,8 +60,8 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
    override fun onMessage(w:WebSocket,text:String){if(epoch==sessionEpoch)receive(text)}
    override fun onMessage(w:WebSocket,bytes:ByteString){if(epoch==sessionEpoch)receive(bytes.utf8())}
    override fun onFailure(w:WebSocket,t:Throwable,r:Response?){if(epoch==sessionEpoch&&!intentionalClose)fail("Gemini handshake failed: "+(r?.code?.toString()?:t.javaClass.simpleName)+" "+(t.message?:"").take(90))}
-   override fun onClosed(w:WebSocket,code:Int,reason:String){if(!intentionalClose)fail("Gemini closed connection: $code $reason")}
-   override fun onClosing(w:WebSocket,code:Int,reason:String){if(!intentionalClose)fail("Gemini rejected session: $code $reason")}
+   override fun onClosed(w:WebSocket,code:Int,reason:String){if(epoch==sessionEpoch&&!intentionalClose)fail("Gemini closed connection: $code $reason")}
+   override fun onClosing(w:WebSocket,code:Int,reason:String){if(epoch==sessionEpoch&&!intentionalClose)fail("Gemini rejected session: $code $reason")}
   })
  }
  private fun receive(payload:String){
@@ -71,8 +71,8 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   if(failed||intentionalClose)return
   failed=true
   timeout?.let{main.removeCallbacks(it)};timeout=null
-  listener.onError(reason)
   close()
+  listener.onError(reason)
  }
  private fun configure(w:WebSocket){
   val prompt="You are Lumi, a kind, playful bilingual Vietnamese-English speaking friend for a young Vietnamese child learning English. The child may speak English, Vietnamese, mixed language, softly, hesitantly or with imperfect pronunciation. Understand the meaning rather than demanding exact words. Respond naturally to what the child actually says. Use short, clear, warm spoken English at a relaxed pace, usually 3 to 8 words per sentence, with small natural pauses. Do not drill the same question repeatedly or make the child repeat a phrase unless they want to. If the child says 'con không hiểu', 'không biết', 'what?', 'hả?', 'I don't know', asks for Vietnamese, or sounds confused, gently explain the last question in simple Vietnamese (one brief sentence), then give one very easy English example and let them answer in either language. If the child hesitates, encourage them with a simple example or offer two easy choices, without pressure. Acknowledge their answer before changing the topic. Ask at most one question per turn; sometimes just comment or celebrate instead of asking. When the child speaks Vietnamese, reply briefly in Vietnamese and introduce one easy English word naturally. Never demand personal details such as full name, location, school or contact information. Never tell the child to move closer to the phone. Avoid unsafe topics and long monologues. Your role is a supportive friend, not a quiz machine."
@@ -89,6 +89,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   if(!connected)return
   try{
    val min=AudioRecord.getMinBufferSize(inputRate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT)
+   if(min<=0)throw IllegalStateException("Unsupported microphone format")
    recorder=AudioRecord.Builder().setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
     .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(inputRate).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
     .setBufferSizeInBytes(maxOf(min,6400)).build()
@@ -104,7 +105,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
      if(n>0 && connected && !assistantSpeaking && android.os.SystemClock.elapsedRealtime()>=suppressMicUntil){
       val audio=JSONObject().put("mimeType","audio/pcm;rate=16000").put("data",Base64.encodeToString(buf,0,n,Base64.NO_WRAP))
       ws?.send(JSONObject().put("realtimeInput",JSONObject().put("audio",audio)).toString())
-     }else if(n<0)break
+     }else if(n<0){if(recording && !intentionalClose)main.post{fail("Microphone stopped unexpectedly")};break}
     }
    }
   }catch(e:Exception){fail("Microphone cannot start") }
@@ -150,14 +151,15 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
        player=track
        track.play()
        var framesWritten=0L
+       var frameBase=track.playbackHeadPosition.toLong() and 0xffffffffL
        while(playingAudio){
         if(playbackResetRequested){
          playbackResetRequested=false
          track.pause()
          track.flush()
-         track.stop()
          track.play()
          framesWritten=0L
+         frameBase=track.playbackHeadPosition.toLong() and 0xffffffffL
         }
         val chunk=audioQueue.poll(35,TimeUnit.MILLISECONDS)
         if(chunk!=null){
@@ -165,14 +167,14 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
          var offset=0
          while(offset<chunk.size && playingAudio && generation==audioGeneration){
           val n=track.write(chunk,offset,chunk.size-offset)
-          if(n<=0)break
+          if(n<=0)throw IllegalStateException("AudioTrack write failed: $n")
           offset+=n
           framesWritten+=n/2L
          }
         }else if(audioTurnEnded && audioQueue.isEmpty()){
          // A write only fills AudioTrack's buffer: wait for the speaker to
          // actually finish playing the buffered frames before opening the mic.
-         val played=track.playbackHeadPosition.toLong() and 0xffffffffL
+         val played=(track.playbackHeadPosition.toLong() and 0xffffffffL)-frameBase
          if(played>=framesWritten){
           audioTurnEnded=false
           assistantSpeaking=false
