@@ -5,6 +5,9 @@ import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.util.Base64
 import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -39,6 +42,9 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  private lateinit var mic:TextView
  private lateinit var answerRow:LinearLayout
  private lateinit var pika:ImageView
+ private lateinit var dressOverlay:View
+ private var selectedDress=0
+ private val dressColors=intArrayOf(0xFFF68DB6.toInt(),0xFF64B7F4.toInt(),0xFFF8CD4B.toInt(),0xFF70CFA4.toInt(),0xFFB18DE9.toInt())
  private lateinit var mouth:View
  private lateinit var eyeL:View
  private lateinit var eyeR:View
@@ -82,7 +88,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  }.getOrDefault("")
  private fun dp(v:Int)=(v*resources.displayMetrics.density).toInt()
  private fun shape(c:Int,r:Int,stroke:Int=0,sc:Int=Color.TRANSPARENT)=GradientDrawable().apply{setColor(c);cornerRadius=dp(r).toFloat();if(stroke>0)setStroke(dp(stroke),sc)}
- override fun onCreate(b:Bundle?){super.onCreate(b);WindowCompat.setDecorFitsSystemWindows(window,false);window.statusBarColor=Color.TRANSPARENT;window.navigationBarColor=Color.rgb(255,244,248);score=getSharedPreferences("lumi",0).getInt("stars",0);ui();voice=RealtimeVoiceClient(BuildConfig.PIKA_TOKEN_URL,this);tts=TextToSpeech(this){code->ttsReady=code==TextToSpeech.SUCCESS;if(ttsReady)tts?.language=Locale.US}}
+ override fun onCreate(b:Bundle?){super.onCreate(b);WindowCompat.setDecorFitsSystemWindows(window,false);window.statusBarColor=Color.TRANSPARENT;window.navigationBarColor=Color.rgb(255,244,248);score=getSharedPreferences("lumi",0).getInt("stars",0);selectedDress=getSharedPreferences("lumi",0).getInt("dress",0).coerceIn(0,4);ui();voice=RealtimeVoiceClient(BuildConfig.PIKA_TOKEN_URL,this);tts=TextToSpeech(this){code->ttsReady=code==TextToSpeech.SUCCESS;if(ttsReady)tts?.language=Locale.US}}
  private fun ui(){
   val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(18),0,dp(18),dp(12));setBackgroundColor(Color.rgb(255,246,250))}
   ViewCompat.setOnApplyWindowInsetsListener(root){v,i->val s=i.getInsets(WindowInsetsCompat.Type.systemBars());v.setPadding(dp(18),s.top+dp(8),dp(18),s.bottom+dp(10));i}
@@ -103,6 +109,34 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
    scaleType=ImageView.ScaleType.FIT_CENTER;contentDescription="Lumi"
   }
   stage.addView(pika,FrameLayout.LayoutParams(-1,-1))
+  dressOverlay=object:View(this){
+   private val paint=Paint(Paint.ANTI_ALIAS_FLAG)
+   override fun onDraw(c:Canvas){
+    super.onDraw(c)
+    if(selectedDress==0)return
+    val w=width.toFloat();val h=height.toFloat()
+    val cx=w*.50f
+    val cy=h*.67f
+    val unit=minOf(w,h)*.15f
+    val outline=Path().apply{
+     moveTo(cx-unit*.34f,cy-unit*.53f)
+     lineTo(cx+unit*.34f,cy-unit*.53f)
+     lineTo(cx+unit*.44f,cy-unit*.13f)
+     lineTo(cx+unit*.83f,cy+unit*.66f)
+     quadTo(cx,cy+unit*.94f,cx-unit*.83f,cy+unit*.66f)
+     lineTo(cx-unit*.44f,cy-unit*.13f)
+     close()
+    }
+    paint.style=Paint.Style.FILL;paint.color=dressColors[selectedDress]
+    c.drawPath(outline,paint)
+    paint.style=Paint.Style.STROKE;paint.strokeWidth=unit*.055f;paint.color=Color.WHITE
+    c.drawPath(outline,paint)
+    paint.style=Paint.Style.FILL;paint.color=Color.WHITE
+    c.drawCircle(cx,cy-unit*.22f,unit*.075f,paint)
+    c.drawCircle(cx,cy-unit*.01f,unit*.075f,paint)
+   }
+  }
+  stage.addView(dressOverlay,FrameLayout.LayoutParams(-1,-1))
   eyeL=View(this).apply{background=shape(Color.rgb(255,218,220),20);alpha=0f};eyeR=View(this).apply{background=shape(Color.rgb(255,218,220),20);alpha=0f};mouth=View(this).apply{background=shape(Color.rgb(190,45,75),20);alpha=0f}
   stage.addView(eyeL,FrameLayout.LayoutParams(dp(34),dp(11)));stage.addView(eyeR,FrameLayout.LayoutParams(dp(34),dp(11)));stage.addView(mouth,FrameLayout.LayoutParams(dp(22),dp(12)))
   stage.post{fun pos(v:View,x:Float,y:Float){v.x=stage.width*x-v.layoutParams.width/2f;v.y=stage.height*y-v.layoutParams.height/2f};pos(eyeL,.39f,.31f);pos(eyeR,.61f,.31f);pos(mouth,.50f,.39f);blinkLoop()}
@@ -202,6 +236,18 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  override fun onReady(r:Boolean)=runOnUiThread{if(r){offline=false;answerRow.visibility=View.GONE;status.text="🟢 Connected · Lumi is listening";bubble.visibility=View.GONE}}
  override fun onError(t:String)=runOnUiThread{geminiFailureMessage=t.take(150);if(!offline)fallback();status.text="⚠ Gemini: $geminiFailureMessage";Toast.makeText(this,"Gemini: $geminiFailureMessage",Toast.LENGTH_LONG).show()}
  private fun blinkLoop(){eyeL.postDelayed(object:Runnable{override fun run(){eyeL.alpha=.92f;eyeR.alpha=.92f;eyeL.postDelayed({eyeL.alpha=0f;eyeR.alpha=0f},130);eyeL.postDelayed(this,3200)}},1800)}
- private fun wardrobe(){val need=intArrayOf(0,10,20,35,50);val a=arrayOf("🌸 Pink Princess  ✓","💙 Sky Blue  • 10 ⭐","💛 Sunny Yellow • 20 ⭐","🌿 Mint Green • 35 ⭐","💜 Purple Sparkle • 50 ⭐");android.app.AlertDialog.Builder(this).setTitle("Lumi's Wardrobe").setItems(a){_,i->Toast.makeText(this,if(score>=need[i])"Dress saved for Lumi 💗" else "Keep talking with Lumi to earn stars!",Toast.LENGTH_SHORT).show()}.setNegativeButton("Close",null).show()}
+ private fun wardrobe(){
+  val need=intArrayOf(0,10,20,35,50)
+  val names=arrayOf("🌸 Pink Princess","💙 Sky Blue","💛 Sunny Yellow","🌿 Mint Green","💜 Purple Sparkle")
+  val options=names.mapIndexed{i,n->n+if(i==selectedDress)"  ✓ Đang mặc" else if(score>=need[i])"  ✓ Đã mở khóa" else "  🔒 ${need[i]} ⭐"}.toTypedArray()
+  android.app.AlertDialog.Builder(this).setTitle("Lumi's Wardrobe").setItems(options){_,i->
+   if(score>=need[i]){
+    selectedDress=i
+    getSharedPreferences("lumi",0).edit().putInt("dress",i).apply()
+    dressOverlay.invalidate()
+    Toast.makeText(this,"Lumi đã thay váy! 💗",Toast.LENGTH_SHORT).show()
+   }else Toast.makeText(this,"Cần ${need[i]} sao để mở váy này ⭐",Toast.LENGTH_SHORT).show()
+  }.setNegativeButton("Close",null).show()
+ }
  override fun onDestroy(){offline=false;recognizer?.destroy();tts?.shutdown();voice.close();super.onDestroy()}
 }
