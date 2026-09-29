@@ -55,9 +55,9 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   eyeL=View(this).apply{background=shape(Color.rgb(255,218,220),20);alpha=0f};eyeR=View(this).apply{background=shape(Color.rgb(255,218,220),20);alpha=0f};mouth=View(this).apply{background=shape(Color.rgb(190,45,75),20);alpha=0f}
   stage.addView(eyeL,FrameLayout.LayoutParams(dp(34),dp(11)));stage.addView(eyeR,FrameLayout.LayoutParams(dp(34),dp(11)));stage.addView(mouth,FrameLayout.LayoutParams(dp(22),dp(12)))
   stage.post{fun pos(v:View,x:Float,y:Float){v.x=stage.width*x-v.layoutParams.width/2f;v.y=stage.height*y-v.layoutParams.height/2f};pos(eyeL,.39f,.31f);pos(eyeR,.61f,.31f);pos(mouth,.50f,.39f);blinkLoop()}
-  bubble=TextView(this).apply{text="Hello! I'm Lumi!\nLet's speak English together 💗";textSize=18f;setTextColor(Color.rgb(99,29,71));setTypeface(typeface,Typeface.BOLD);gravity=Gravity.CENTER;background=shape(Color.argb(246,255,255,255),22);elevation=dp(5).toFloat();setPadding(dp(18),dp(13),dp(18),dp(13))}
-  stage.addView(bubble,FrameLayout.LayoutParams(-1,-2).apply{gravity=Gravity.TOP;setMargins(dp(20),dp(18),dp(20),0)})
-  status=TextView(this).apply{text="Tap the microphone and talk to Lumi";textSize=14f;setTextColor(Color.rgb(119,76,98));gravity=Gravity.CENTER}
+  bubble=TextView(this).apply{text="";textSize=18f;setTextColor(Color.rgb(99,29,71));setTypeface(typeface,Typeface.BOLD);gravity=Gravity.CENTER;background=shape(Color.argb(246,255,255,255),22);elevation=dp(5).toFloat();setPadding(dp(18),dp(13),dp(18),dp(13))}
+  stage.addView(bubble,FrameLayout.LayoutParams(-1,-2).apply{gravity=Gravity.TOP;setMargins(dp(20),dp(18),dp(20),0)});bubble.visibility=View.GONE
+  status=TextView(this).apply{text="";textSize=14f;setTextColor(Color.rgb(119,76,98));gravity=Gravity.CENTER}
   mic=TextView(this).apply{text="🎙";textSize=38f;gravity=Gravity.CENTER;setTextColor(Color.WHITE);background=shape(Color.rgb(250,35,109),38);elevation=dp(8).toFloat();setOnClickListener{startVoice()}}
   root.addView(top,LinearLayout.LayoutParams(-1,dp(58)))
   root.addView(stage,LinearLayout.LayoutParams(-1,0,1f).apply{setMargins(0,dp(5),0,dp(10))})
@@ -69,8 +69,8 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  private fun startVoice(){mic.animate().scaleX(.9f).scaleY(.9f).setDuration(100).withEndAction{mic.animate().scaleX(1f).scaleY(1f).duration=140}.start();if(ActivityCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)voice.connect() else ActivityCompat.requestPermissions(this,arrayOf(Manifest.permission.RECORD_AUDIO),7)}
  override fun onRequestPermissionsResult(r:Int,p:Array<out String>,g:IntArray){super.onRequestPermissionsResult(r,p,g);if(r==7&&g.firstOrNull()==PackageManager.PERMISSION_GRANTED)voice.connect()}
  override fun onStatus(t:String)=runOnUiThread{status.text=t}
- override fun onUserTranscript(t:String)=runOnUiThread{if(t.isNotBlank()){score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score";bubble.text=t}}
- override fun onPikaTranscript(t:String)=runOnUiThread{if(t.isNotBlank()){bubble.alpha=0f;bubble.text=t;bubble.animate().alpha(1f).setDuration(220).start()}}
+ override fun onUserTranscript(t:String)=runOnUiThread{if(t.isNotBlank()){score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score";bubble.visibility=View.VISIBLE;bubble.text=t}}
+ override fun onPikaTranscript(t:String)=runOnUiThread{if(t.isNotBlank()){bubble.alpha=0f;bubble.visibility=View.VISIBLE;bubble.text=t;bubble.animate().alpha(1f).setDuration(220).start()}}
  override fun onSpeaking(a:Boolean,l:Float)=runOnUiThread{status.text=if(a)"Lumi is speaking…" else "I'm listening…";mouth.animate().cancel();if(a){mouth.alpha=.88f;mouth.animate().scaleY(1.8f).setDuration(120).withEndAction{mouth.animate().scaleY(.65f).setDuration(120).start()}.start()}else{mouth.alpha=0f;mouth.scaleY=1f}}
  override fun onReady(r:Boolean)=Unit
  override fun onError(t:String)=runOnUiThread{status.text=if(BuildConfig.PIKA_TOKEN_URL.contains("example.invalid"))"Voice will be connected in the final API step" else t}
