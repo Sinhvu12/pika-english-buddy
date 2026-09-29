@@ -113,7 +113,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   val q=quiz[questionIndex%quiz.size]
   bubble.visibility=View.VISIBLE
   bubble.text=q.first
-  status.text=""
+  status.text="🌸 Lumi English Game · Offline mode"
   if(ttsReady)tts?.speak(q.first,TextToSpeech.QUEUE_FLUSH,null,"question")
   android.app.AlertDialog.Builder(this).setTitle("Lumi English Game").setMessage(q.first)
    .setItems(q.second){_,index->
@@ -138,7 +138,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  override fun onUserTranscript(t:String)=runOnUiThread{if(t.isNotBlank()){score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score";bubble.visibility=View.VISIBLE;bubble.text=t}}
  override fun onPikaTranscript(t:String)=runOnUiThread{if(t.isNotBlank()){bubble.alpha=0f;bubble.visibility=View.VISIBLE;bubble.text=t;bubble.animate().alpha(1f).setDuration(220).start()}}
  override fun onSpeaking(a:Boolean,l:Float)=runOnUiThread{status.text=if(a)"Lumi is speaking…" else "I'm listening…";mouth.animate().cancel();if(a){mouth.alpha=.88f;mouth.animate().scaleY(1.8f).setDuration(120).withEndAction{mouth.animate().scaleY(.65f).setDuration(120).start()}.start()}else{mouth.alpha=0f;mouth.scaleY=1f}}
- override fun onReady(r:Boolean){if(r)runOnUiThread{offline=false}}
+ override fun onReady(r:Boolean)=runOnUiThread{if(r){offline=false;status.text="🟢 Connected · Lumi is listening";bubble.visibility=View.VISIBLE;bubble.text="Hi! Let\u0027s speak English! 🌸"}}
  override fun onError(t:String)=runOnUiThread{if(!offline)fallback()}
  private fun blinkLoop(){eyeL.postDelayed(object:Runnable{override fun run(){eyeL.alpha=.92f;eyeR.alpha=.92f;eyeL.postDelayed({eyeL.alpha=0f;eyeR.alpha=0f},130);eyeL.postDelayed(this,3200)}},1800)}
  private fun wardrobe(){val need=intArrayOf(0,10,20,35,50);val a=arrayOf("🌸 Pink Princess  ✓","💙 Sky Blue  • 10 ⭐","💛 Sunny Yellow • 20 ⭐","🌿 Mint Green • 35 ⭐","💜 Purple Sparkle • 50 ⭐");android.app.AlertDialog.Builder(this).setTitle("Lumi's Wardrobe").setItems(a){_,i->Toast.makeText(this,if(score>=need[i])"Dress saved for Lumi 💗" else "Keep talking with Lumi to earn stars!",Toast.LENGTH_SHORT).show()}.setNegativeButton("Close",null).show()}
