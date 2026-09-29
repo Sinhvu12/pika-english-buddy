@@ -104,12 +104,27 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
    val micEpoch=sessionEpoch
    micWorker=thread(name="gemini-mic"){
     val buf=ByteArray(3200)
+    var congestedChunks=0
     while(recording && micEpoch==sessionEpoch){
      val n=try{activeRecorder.read(buf,0,buf.size)}catch(_:Exception){-1}
      if(n>0 && connected && micEpoch==sessionEpoch && !assistantSpeaking && android.os.SystemClock.elapsedRealtime()>=suppressMicUntil){
       val audio=JSONObject().put("mimeType","audio/pcm;rate=16000").put("data",Base64.encodeToString(buf,0,n,Base64.NO_WRAP))
       val socket=ws
-      if(socket!=null && socket.queueSize()<256_000L && !socket.send(JSONObject().put("realtimeInput",JSONObject().put("audio",audio)).toString())){
+      if(socket==null){
+       main.post{if(micEpoch==sessionEpoch)fail("Voice connection is unavailable")}
+       break
+      }
+      if(socket.queueSize()>=256_000L){
+       // Do not silently discard a child's speech indefinitely when upload stalls.
+       congestedChunks++
+       if(congestedChunks>=15){
+        main.post{if(micEpoch==sessionEpoch)fail("Network is too slow to hear clearly; please reconnect")}
+        break
+       }
+       continue
+      }
+      congestedChunks=0
+      if(!socket.send(JSONObject().put("realtimeInput",JSONObject().put("audio",audio)).toString())){
        main.post{if(micEpoch==sessionEpoch)fail("Voice connection stopped sending audio")}
        break
       }
