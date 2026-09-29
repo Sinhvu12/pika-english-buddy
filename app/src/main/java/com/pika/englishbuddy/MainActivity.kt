@@ -57,6 +57,10 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  private var recognizer:SpeechRecognizer?=null
  private var listeningOffline=false
  private var geminiFailureMessage=""
+ private var retryCount=0
+ private var retryWindowStarted=0L
+ private var retryGeneration=0
+ private var lastVoiceReadyAt=0L
  private var expectedAnswer=""
  private val pictures=mapOf("Yellow" to "☀️","Blue" to "🔵","Pink" to "🌸","Cat" to "🐱","Dog" to "🐶","Duck" to "🦆","Green" to "🌿","Red" to "🔴","Purple" to "🟣","Five" to "🖐️","Two" to "✌️","Ten" to "🙌")
  private val quiz=listOf(
@@ -111,7 +115,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   stage.post{fun pos(v:View,x:Float,y:Float){v.x=stage.width*x-v.layoutParams.width/2f;v.y=stage.height*y-v.layoutParams.height/2f};pos(eyeL,.39f,.31f);pos(eyeR,.61f,.31f);pos(mouth,.50f,.39f);blinkLoop()}
   bubble=TextView(this).apply{text="";textSize=18f;setTextColor(Color.rgb(99,29,71));setTypeface(typeface,Typeface.BOLD);gravity=Gravity.CENTER;background=shape(Color.argb(246,255,255,255),22);elevation=dp(5).toFloat();setPadding(dp(18),dp(13),dp(18),dp(13))}
   stage.addView(bubble,FrameLayout.LayoutParams(-1,-2).apply{gravity=Gravity.TOP;setMargins(dp(20),dp(18),dp(20),0)});bubble.visibility=View.GONE
-  status=TextView(this).apply{text="";textSize=14f;setTextColor(Color.rgb(119,76,98));gravity=Gravity.CENTER}
+  status=TextView(this).apply{text="";textSize=14f;setTextColor(Color.rgb(119,76,98));gravity=Gravity.CENTER;setOnLongClickListener{if(geminiFailureMessage.isNotBlank())android.app.AlertDialog.Builder(this@MainActivity).setTitle("Thông tin cho phụ huynh").setMessage(geminiFailureMessage).setPositiveButton("Đóng",null).show();true}}
   mic=TextView(this).apply{text="🎙";textSize=38f;gravity=Gravity.CENTER;setTextColor(Color.WHITE);background=shape(Color.rgb(250,35,109),38);elevation=dp(8).toFloat();setOnClickListener{startVoice()}}
   root.addView(top,LinearLayout.LayoutParams(-1,dp(76)))
   root.addView(stage,LinearLayout.LayoutParams(-1,0,1f).apply{setMargins(0,dp(5),0,dp(10))})
@@ -193,6 +197,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   mic.postDelayed({if(offline&&!isFinishing&&quizGeneration==thisQuiz)offlineListen()},1800)
  }
  private fun connectGemini(){
+  retryGeneration++
   if(offline){offline=false;quizGeneration++;answerRow.visibility=View.GONE;recognizer?.cancel();listeningOffline=false;geminiFailureMessage="";status.text="Connecting to Gemini Live…"}
   if(sessionKey.isBlank())sessionKey=readParentKey()
   if(sessionKey.isNotBlank()){voice.connect(sessionKey);return}
@@ -205,8 +210,33 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  override fun onUserTranscript(t:String)=runOnUiThread{if(!offline&&!isFinishing&&t.isNotBlank()&&android.os.SystemClock.elapsedRealtime()-lastStarAwardMs>2500){lastStarAwardMs=android.os.SystemClock.elapsedRealtime();score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score"}}
  override fun onPikaTranscript(t:String)=Unit
  override fun onSpeaking(a:Boolean,l:Float)=runOnUiThread{if(offline||isFinishing)return@runOnUiThread;status.text=if(a)"Lumi is speaking…" else "I'm listening…";mouth.animate().cancel();if(a){mouth.alpha=.88f;mouth.animate().scaleY(1.8f).setDuration(120).withEndAction{mouth.animate().scaleY(.65f).setDuration(120).start()}.start()}else{mouth.alpha=0f;mouth.scaleY=1f}}
- override fun onReady(r:Boolean)=runOnUiThread{if(r){offline=false;answerRow.visibility=View.GONE;status.text="🟢 Connected · Lumi is listening";bubble.visibility=View.GONE}}
- override fun onError(t:String)=runOnUiThread{geminiFailureMessage=t.take(150);if(!offline)fallback();status.text="⚠ Gemini: $geminiFailureMessage";Toast.makeText(this,"Gemini: $geminiFailureMessage",Toast.LENGTH_LONG).show()}
+ override fun onReady(r:Boolean)=runOnUiThread{if(r&&!isFinishing){lastVoiceReadyAt=android.os.SystemClock.elapsedRealtime();offline=false;answerRow.visibility=View.GONE;status.text="🌸 Lumi đang lắng nghe con!";bubble.visibility=View.GONE}}
+ override fun onError(t:String)=runOnUiThread{
+  if(isFinishing||isDestroyed||offline)return@runOnUiThread
+  geminiFailureMessage=t.take(300)
+  val now=android.os.SystemClock.elapsedRealtime()
+  if(retryWindowStarted==0L||now-retryWindowStarted>120_000L){retryWindowStarted=now;retryCount=0}
+  val technical=t.lowercase(Locale.ROOT)
+  val recoverable=technical.contains("network")||technical.contains("websocket")||technical.contains("connection")||technical.contains("closed")||technical.contains("handshake")||technical.contains("timeout")||technical.contains("slow")||technical.contains("audio playback")||technical.contains("sending audio")||technical.contains("microphone stopped")
+  if(recoverable&&sessionKey.isNotBlank()&&retryCount<2){
+   retryCount++
+   val attempt=++retryGeneration
+   status.text="🌷 Lumi đợi một chút nhé!"
+   bubble.visibility=View.VISIBLE
+   bubble.text="Mình chơi tiếp ngay nhé! 💗"
+   mic.postDelayed({
+    if(!isFinishing&&!isDestroyed&&!offline&&attempt==retryGeneration){
+     voice.connect(sessionKey)
+    }
+   },(retryCount*1200L))
+  }else{
+   retryGeneration++
+   fallback()
+   status.text="🌸 Mình chơi chọn hình nhé!"
+   bubble.text="Lumi đang nghỉ một chút. Mình chọn hình nhé! 💗"
+   mic.postDelayed({if(offline&&!isFinishing&&bubble.text.startsWith("Lumi đang nghỉ"))bubble.text=quiz[questionIndex%quiz.size].first},2600)
+  }
+ }
  private fun blinkLoop(){eyeL.postDelayed(object:Runnable{override fun run(){eyeL.alpha=.92f;eyeR.alpha=.92f;eyeL.postDelayed({eyeL.alpha=0f;eyeR.alpha=0f},130);eyeL.postDelayed(this,3200)}},1800)}
  private fun applyDress(){
   val outfit=when(selectedDress){
