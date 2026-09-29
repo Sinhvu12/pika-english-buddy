@@ -24,6 +24,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
  @Volatile private var intentionalClose=false
  @Volatile private var connecting=false
  @Volatile private var failed=false
+ @Volatile private var socketOpened=false
  private var ws:WebSocket?=null
  private var recorder:AudioRecord?=null
  private var player:AudioTrack?=null
@@ -34,17 +35,18 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
  fun connect(apiKey:String){
   if(apiKey.isBlank()){listener.onError("Enter your Gemini API key first.");return}
   if(connected||connecting){close();listener.onStatus("Voice session ended.");return}
-  intentionalClose=false;failed=false;connecting=true
+  intentionalClose=false;failed=false;connecting=true;socketOpened=false
   timeout?.let{main.removeCallbacks(it)}
-  timeout=Runnable{if(connecting&&!connected)fail("Connection timed out")}
-  main.postDelayed(timeout!!,15000)
+  timeout=Runnable{if(connecting&&!connected)fail(if(socketOpened)"Gemini WebSocket opened but setup was not confirmed within 30s" else "Could not open Gemini WebSocket within 30s; check network, VPN or firewall")}
+  main.postDelayed(timeout!!,30000)
   listener.onStatus("Connecting to Gemini Live…")
   val url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key="+apiKey.trim()
   ws=http.newWebSocket(Request.Builder().url(url).build(),object:WebSocketListener(){
-   override fun onOpen(w:WebSocket,r:Response){configure(w)}
-   override fun onMessage(w:WebSocket,text:String){runCatching{handle(JSONObject(text))}.onFailure{fail("Gemini response error")}}
-   override fun onFailure(w:WebSocket,t:Throwable,r:Response?){if(!intentionalClose)fail("Gemini connection failed: "+(r?.code?.toString()?:t.javaClass.simpleName))}
+   override fun onOpen(w:WebSocket,r:Response){socketOpened=true;listener.onStatus("Gemini WebSocket open · waiting for session…");configure(w)}
+   override fun onMessage(w:WebSocket,text:String){runCatching{handle(JSONObject(text))}.onFailure{fail("Gemini response could not be decoded: "+it.javaClass.simpleName)}}
+   override fun onFailure(w:WebSocket,t:Throwable,r:Response?){if(!intentionalClose)fail("Gemini handshake failed: "+(r?.code?.toString()?:t.javaClass.simpleName)+" "+(t.message?:"").take(90))}
    override fun onClosed(w:WebSocket,code:Int,reason:String){if(!intentionalClose)fail("Gemini closed connection: $code $reason")}
+   override fun onClosing(w:WebSocket,code:Int,reason:String){if(!intentionalClose)fail("Gemini rejected session: $code $reason")}
   })
  }
  private fun fail(reason:String){
@@ -62,7 +64,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
    .put("systemInstruction",JSONObject().put("parts",JSONArray().put(JSONObject().put("text",prompt))))
    .put("inputAudioTranscription",JSONObject())
    .put("outputAudioTranscription",JSONObject())
-  w.send(JSONObject().put("setup",setup).toString())
+  if(!w.send(JSONObject().put("setup",setup).toString()))fail("Could not send Gemini session setup")
  }
  private fun startMic(){
   if(recording)return
