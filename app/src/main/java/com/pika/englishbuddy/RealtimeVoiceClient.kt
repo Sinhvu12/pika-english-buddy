@@ -1,6 +1,5 @@
 package com.pika.englishbuddy
 import android.media.*
-import android.media.audiofx.AcousticEchoCanceler
 import android.util.Base64
 import okhttp3.*
 import okio.ByteString
@@ -34,7 +33,8 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
  private val audioQueue=LinkedBlockingQueue<ByteArray>()
  @Volatile private var audioTurnEnded=false
  @Volatile private var audioGeneration=0
- private var echoCanceler:AcousticEchoCanceler?=null
+ @Volatile private var suppressMicUntil=0L
+ @Volatile private var assistantSpeaking=false
  @Volatile private var playingAudio=false
  private var audioWorker:Thread?=null
  @Volatile private var recording=false
@@ -45,7 +45,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   if(apiKey.isBlank()){listener.onError("Enter your Gemini API key first.");return}
   if(connected||connecting){close();listener.onStatus("Voice session ended.");return}
   intentionalClose=false;failed=false;connecting=true;socketOpened=false
-  audioQueue.clear();audioTurnEnded=false
+  audioQueue.clear();audioTurnEnded=false;assistantSpeaking=false;suppressMicUntil=0L
   timeout?.let{main.removeCallbacks(it)}
   timeout=Runnable{if(connecting&&!connected)fail(if(socketOpened)"Gemini WebSocket opened but setup was not confirmed within 30s" else "Could not open Gemini WebSocket within 30s; check network, VPN or firewall")}
   main.postDelayed(timeout!!,30000)
@@ -71,7 +71,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   close()
  }
  private fun configure(w:WebSocket){
-  val prompt="You are Lumi, a cheerful English speaking companion for children. Speak to a five-year-old beginner in a warm, playful, expressive and natural voice. Speak noticeably slowly, about 80 to 95 words per minute, with gentle pauses between short sentences. Use at most one short sentence at a time, usually three to seven simple words. Wait patiently for the child to answer. Respond to what the child says and ask only one very easy follow-up question. Do not spell out words or read on-screen text. Avoid a robotic, rushed or sing-song delivery. Gently model correct grammar. Never ask for private information. Avoid unsafe topics."
+  val prompt="You are Lumi, a kind, playful bilingual Vietnamese-English speaking friend for a young Vietnamese child learning English. The child may speak English, Vietnamese, mixed language, softly, hesitantly or with imperfect pronunciation. Understand the meaning rather than demanding exact words. Respond naturally to what the child actually says. Use short, clear, warm spoken English at a relaxed pace, usually 3 to 8 words per sentence, with small natural pauses. Do not drill the same question repeatedly or make the child repeat a phrase unless they want to. If the child says 'con không hiểu', 'không biết', 'what?', 'hả?', 'I don't know', asks for Vietnamese, or sounds confused, gently explain the last question in simple Vietnamese (one brief sentence), then give one very easy English example and let them answer in either language. If the child hesitates, encourage them with a simple example or offer two easy choices, without pressure. Acknowledge their answer before changing the topic. Ask at most one question per turn; sometimes just comment or celebrate instead of asking. When the child speaks Vietnamese, reply briefly in Vietnamese and introduce one easy English word naturally. Never demand personal details such as full name, location, school or contact information. Never tell the child to move closer to the phone. Avoid unsafe topics and long monologues. Your role is a supportive friend, not a quiz machine."
   val setup=JSONObject().put("model","models/gemini-2.5-flash-native-audio-preview-12-2025")
    .put("generationConfig",JSONObject().put("responseModalities",JSONArray().put("AUDIO"))
     .put("speechConfig",JSONObject().put("voiceConfig",JSONObject().put("prebuiltVoiceConfig",JSONObject().put("voiceName","Leda")))))
@@ -84,10 +84,9 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   if(recording)return
   try{
    val min=AudioRecord.getMinBufferSize(inputRate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT)
-   recorder=AudioRecord.Builder().setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+   recorder=AudioRecord.Builder().setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
     .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(inputRate).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
     .setBufferSizeInBytes(maxOf(min,6400)).build()
-   recorder?.audioSessionId?.let{id->if(AcousticEchoCanceler.isAvailable())echoCanceler=AcousticEchoCanceler.create(id)?.also{it.enabled=true}}
    recorder?.startRecording()
    recording=true
    listener.onStatus("Listening…")
@@ -95,7 +94,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
     val buf=ByteArray(3200)
     while(recording){
      val n=try{recorder?.read(buf,0,buf.size)?:-1}catch(_:Exception){-1}
-     if(n>0){
+     if(n>0 && connected && !assistantSpeaking && android.os.SystemClock.elapsedRealtime()>=suppressMicUntil){
       val audio=JSONObject().put("mimeType","audio/pcm;rate=16000").put("data",Base64.encodeToString(buf,0,n,Base64.NO_WRAP))
       ws?.send(JSONObject().put("realtimeInput",JSONObject().put("audio",audio)).toString())
      }else if(n<0)break
@@ -109,7 +108,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
    timeout?.let{main.removeCallbacks(it)};timeout=null
    listener.onReady(true)
    startMic()
-   val greetingPart=JSONObject().put("text","Say only: Hi, little friend! [pause] What is your name? Speak slowly and warmly.")
+   val greetingPart=JSONObject().put("text","Say only: Hi, friend! [pause] Want to play with me? Speak slowly, warmly and naturally.")
    val greetingTurn=JSONObject().put("role","user").put("parts",JSONArray().put(greetingPart))
    val hello=JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(greetingTurn)).put("turnComplete",true))
    ws?.send(hello.toString())
@@ -120,7 +119,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   val content=j.optJSONObject("serverContent")?:j.optJSONObject("server_content")?:return
   content.optJSONObject("inputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onUserTranscript(it)}
   content.optJSONObject("outputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onPikaTranscript(it)}
-  if(content.optBoolean("interrupted")){audioGeneration++;audioQueue.clear();audioTurnEnded=true;listener.onSpeaking(false,0f)}
+  if(content.optBoolean("interrupted")){audioGeneration++;audioQueue.clear();audioTurnEnded=true;assistantSpeaking=false;suppressMicUntil=android.os.SystemClock.elapsedRealtime()+500;listener.onSpeaking(false,0f)}
   val parts=content.optJSONObject("modelTurn")?.optJSONArray("parts")
   if(parts!=null)for(i in 0 until parts.length()){
    val inline=parts.optJSONObject(i)?.optJSONObject("inlineData")?:continue
@@ -145,7 +144,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
        track.play()
        while(playingAudio){
         val chunk=audioQueue.poll(80,TimeUnit.MILLISECONDS)
-        if(chunk==null){if(audioTurnEnded && audioQueue.isEmpty()){audioTurnEnded=false;listener.onSpeaking(false,0f)};continue}
+        if(chunk==null){if(audioTurnEnded && audioQueue.isEmpty()){audioTurnEnded=false;assistantSpeaking=false;suppressMicUntil=android.os.SystemClock.elapsedRealtime()+450;listener.onSpeaking(false,0f)};continue}
         if(playingAudio){
          val generation=audioGeneration
          var offset=0
@@ -166,6 +165,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
    }
   }
   audioTurnEnded=false
+  assistantSpeaking=true
   audioQueue.offer(bytes)
   listener.onSpeaking(true,.5f)
  }
@@ -174,7 +174,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   timeout?.let{main.removeCallbacks(it)};timeout=null
   recording=false;connected=false
   playingAudio=false;audioGeneration++;audioQueue.clear();audioWorker?.interrupt();audioWorker=null
-  echoCanceler?.release();echoCanceler=null
+  assistantSpeaking=false
   try{recorder?.stop()}catch(_:Exception){}
   recorder?.release();recorder=null
   // The audio worker owns AudioTrack shutdown.
