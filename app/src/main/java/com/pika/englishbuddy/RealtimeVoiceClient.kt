@@ -94,7 +94,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
    startMic()
    val greetingPart=JSONObject().put("text","Say a short cheerful hello to the child in English, then invite them to speak.")
    val greetingTurn=JSONObject().put("role","user").put("parts",JSONArray().put(greetingPart))
-   val hello=JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(greetingTurn)).put("turnComplete",true)
+   val hello=JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(greetingTurn)).put("turnComplete",true))
    ws?.send(hello.toString())
    return
   }
