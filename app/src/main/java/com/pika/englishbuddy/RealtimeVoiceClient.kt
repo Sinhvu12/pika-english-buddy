@@ -37,6 +37,8 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
  @Volatile private var assistantSpeaking=false
  @Volatile private var playingAudio=false
  private var audioWorker:Thread?=null
+ @Volatile private var sessionEpoch=0
+ @Volatile private var playbackErrorReported=false
  @Volatile private var playbackResetRequested=false
  @Volatile private var recording=false
  @Volatile private var connected=false
@@ -45,7 +47,8 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
  fun connect(apiKey:String){
   if(apiKey.isBlank()){listener.onError("Enter your Gemini API key first.");return}
   if(connected||connecting){close();listener.onStatus("Voice session ended.");return}
-  intentionalClose=false;failed=false;connecting=true;socketOpened=false
+  intentionalClose=false;failed=false;connecting=true;socketOpened=false;sessionEpoch++
+  val epoch=sessionEpoch
   audioQueue.clear();audioTurnEnded=false;assistantSpeaking=false;suppressMicUntil=0L;playbackResetRequested=false
   timeout?.let{main.removeCallbacks(it)}
   timeout=Runnable{if(connecting&&!connected)fail(if(socketOpened)"Gemini WebSocket opened but setup was not confirmed within 30s" else "Could not open Gemini WebSocket within 30s; check network, VPN or firewall")}
@@ -53,10 +56,10 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   listener.onStatus("Connecting to Gemini Live…")
   val url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key="+apiKey.trim()
   ws=http.newWebSocket(Request.Builder().url(url).build(),object:WebSocketListener(){
-   override fun onOpen(w:WebSocket,r:Response){socketOpened=true;listener.onStatus("Gemini WebSocket open · waiting for session…");configure(w)}
-   override fun onMessage(w:WebSocket,text:String){receive(text)}
-   override fun onMessage(w:WebSocket,bytes:ByteString){receive(bytes.utf8())}
-   override fun onFailure(w:WebSocket,t:Throwable,r:Response?){if(!intentionalClose)fail("Gemini handshake failed: "+(r?.code?.toString()?:t.javaClass.simpleName)+" "+(t.message?:"").take(90))}
+   override fun onOpen(w:WebSocket,r:Response){if(epoch!=sessionEpoch)return;socketOpened=true;listener.onStatus("Gemini WebSocket open · waiting for session…");configure(w)}
+   override fun onMessage(w:WebSocket,text:String){if(epoch==sessionEpoch)receive(text)}
+   override fun onMessage(w:WebSocket,bytes:ByteString){if(epoch==sessionEpoch)receive(bytes.utf8())}
+   override fun onFailure(w:WebSocket,t:Throwable,r:Response?){if(epoch==sessionEpoch&&!intentionalClose)fail("Gemini handshake failed: "+(r?.code?.toString()?:t.javaClass.simpleName)+" "+(t.message?:"").take(90))}
    override fun onClosed(w:WebSocket,code:Int,reason:String){if(!intentionalClose)fail("Gemini closed connection: $code $reason")}
    override fun onClosing(w:WebSocket,code:Int,reason:String){if(!intentionalClose)fail("Gemini rejected session: $code $reason")}
   })
@@ -83,12 +86,15 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
  }
  private fun startMic(){
   if(recording)return
+  if(!connected)return
   try{
    val min=AudioRecord.getMinBufferSize(inputRate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT)
    recorder=AudioRecord.Builder().setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
     .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(inputRate).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
     .setBufferSizeInBytes(maxOf(min,6400)).build()
+   if(recorder?.state!=AudioRecord.STATE_INITIALIZED)throw IllegalStateException("Microphone unavailable")
    recorder?.startRecording()
+   if(recorder?.recordingState!=AudioRecord.RECORDSTATE_RECORDING)throw IllegalStateException("Microphone did not start")
    recording=true
    listener.onStatus("Listening…")
    thread(name="gemini-mic"){
@@ -149,6 +155,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
          playbackResetRequested=false
          track.pause()
          track.flush()
+         track.stop()
          track.play()
          framesWritten=0L
         }
@@ -174,7 +181,9 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
          }
         }
        }
-      }catch(_:InterruptedException){}catch(_:Exception){}finally{
+      }catch(_:InterruptedException){}catch(e:Exception){
+       if(!intentionalClose && !playbackErrorReported){playbackErrorReported=true;main.post{fail("Audio playback failed: "+(e.message?:"device audio error").take(90))}}
+      }finally{
        try{player?.stop()}catch(_:Exception){}
        try{player?.release()}catch(_:Exception){}
        player=null
@@ -189,11 +198,12 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   listener.onSpeaking(true,.5f)
  }
  fun close(){
-  intentionalClose=true;connecting=false
+  intentionalClose=true;connecting=false;sessionEpoch++
   timeout?.let{main.removeCallbacks(it)};timeout=null
   recording=false;connected=false
   playingAudio=false;audioGeneration++;audioQueue.clear();playbackResetRequested=true;audioWorker?.interrupt();audioWorker=null
   assistantSpeaking=false
+  listener.onSpeaking(false,0f)
   try{recorder?.stop()}catch(_:Exception){}
   recorder?.release();recorder=null
   // The audio worker owns AudioTrack shutdown.
