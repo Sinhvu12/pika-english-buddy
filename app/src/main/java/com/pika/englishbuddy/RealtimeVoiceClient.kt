@@ -37,6 +37,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
  @Volatile private var assistantSpeaking=false
  @Volatile private var playingAudio=false
  private var audioWorker:Thread?=null
+ @Volatile private var playbackResetRequested=false
  @Volatile private var recording=false
  @Volatile private var connected=false
  private val inputRate=16000
@@ -45,7 +46,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   if(apiKey.isBlank()){listener.onError("Enter your Gemini API key first.");return}
   if(connected||connecting){close();listener.onStatus("Voice session ended.");return}
   intentionalClose=false;failed=false;connecting=true;socketOpened=false
-  audioQueue.clear();audioTurnEnded=false;assistantSpeaking=false;suppressMicUntil=0L
+  audioQueue.clear();audioTurnEnded=false;assistantSpeaking=false;suppressMicUntil=0L;playbackResetRequested=false
   timeout?.let{main.removeCallbacks(it)}
   timeout=Runnable{if(connecting&&!connected)fail(if(socketOpened)"Gemini WebSocket opened but setup was not confirmed within 30s" else "Could not open Gemini WebSocket within 30s; check network, VPN or firewall")}
   main.postDelayed(timeout!!,30000)
@@ -119,7 +120,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   val content=j.optJSONObject("serverContent")?:j.optJSONObject("server_content")?:return
   content.optJSONObject("inputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onUserTranscript(it)}
   content.optJSONObject("outputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onPikaTranscript(it)}
-  if(content.optBoolean("interrupted")){audioGeneration++;audioQueue.clear();audioTurnEnded=true;assistantSpeaking=false;suppressMicUntil=android.os.SystemClock.elapsedRealtime()+500;listener.onSpeaking(false,0f)}
+  if(content.optBoolean("interrupted")){audioGeneration++;audioQueue.clear();audioTurnEnded=false;playbackResetRequested=true;assistantSpeaking=false;suppressMicUntil=android.os.SystemClock.elapsedRealtime()+350;listener.onSpeaking(false,0f)}
   val parts=content.optJSONObject("modelTurn")?.optJSONArray("parts")
   if(parts!=null)for(i in 0 until parts.length()){
    val inline=parts.optJSONObject(i)?.optJSONObject("inlineData")?:continue
@@ -142,16 +143,34 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
         .setBufferSizeInBytes(maxOf(min,24000)).setTransferMode(AudioTrack.MODE_STREAM).build()
        player=track
        track.play()
+       var framesWritten=0L
        while(playingAudio){
-        val chunk=audioQueue.poll(80,TimeUnit.MILLISECONDS)
-        if(chunk==null){if(audioTurnEnded && audioQueue.isEmpty()){audioTurnEnded=false;assistantSpeaking=false;suppressMicUntil=android.os.SystemClock.elapsedRealtime()+450;listener.onSpeaking(false,0f)};continue}
-        if(playingAudio){
+        if(playbackResetRequested){
+         playbackResetRequested=false
+         track.pause()
+         track.flush()
+         track.play()
+         framesWritten=0L
+        }
+        val chunk=audioQueue.poll(35,TimeUnit.MILLISECONDS)
+        if(chunk!=null){
          val generation=audioGeneration
          var offset=0
          while(offset<chunk.size && playingAudio && generation==audioGeneration){
           val n=track.write(chunk,offset,chunk.size-offset)
           if(n<=0)break
           offset+=n
+          framesWritten+=n/2L
+         }
+        }else if(audioTurnEnded && audioQueue.isEmpty()){
+         // A write only fills AudioTrack's buffer: wait for the speaker to
+         // actually finish playing the buffered frames before opening the mic.
+         val played=track.playbackHeadPosition.toLong() and 0xffffffffL
+         if(played>=framesWritten){
+          audioTurnEnded=false
+          assistantSpeaking=false
+          suppressMicUntil=android.os.SystemClock.elapsedRealtime()+180
+          listener.onSpeaking(false,0f)
          }
         }
        }
@@ -173,7 +192,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   intentionalClose=true;connecting=false
   timeout?.let{main.removeCallbacks(it)};timeout=null
   recording=false;connected=false
-  playingAudio=false;audioGeneration++;audioQueue.clear();audioWorker?.interrupt();audioWorker=null
+  playingAudio=false;audioGeneration++;audioQueue.clear();playbackResetRequested=true;audioWorker?.interrupt();audioWorker=null
   assistantSpeaking=false
   try{recorder?.stop()}catch(_:Exception){}
   recorder?.release();recorder=null
