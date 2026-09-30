@@ -44,6 +44,16 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  private lateinit var answerRow:LinearLayout
  private lateinit var pika:ImageView
  private var selectedDress=0
+ private var floatingAnimator:ObjectAnimator?=null
+ private val blinkHandler=android.os.Handler(android.os.Looper.getMainLooper())
+ private val blinkRunnable=object:Runnable{
+  override fun run(){
+   if(isFinishing||isDestroyed)return
+   eyeL.alpha=.92f;eyeR.alpha=.92f
+   blinkHandler.postDelayed({if(!isFinishing&&!isDestroyed){eyeL.alpha=0f;eyeR.alpha=0f}},130)
+   blinkHandler.postDelayed(this,3200)
+  }
+ }
  private lateinit var mouth:View
  private lateinit var eyeL:View
  private lateinit var eyeR:View
@@ -124,7 +134,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   root.addView(answerRow,LinearLayout.LayoutParams(-1,-2))
   val micRow=FrameLayout(this);micRow.addView(mic,FrameLayout.LayoutParams(dp(76),dp(76),Gravity.CENTER))
   root.addView(micRow,LinearLayout.LayoutParams(-1,dp(84)));setContentView(root)
-  ObjectAnimator.ofFloat(pika,View.TRANSLATION_Y,0f,-dp(5).toFloat(),0f).apply{duration=3000;repeatCount=ObjectAnimator.INFINITE;start()}
+  floatingAnimator=ObjectAnimator.ofFloat(pika,View.TRANSLATION_Y,0f,-dp(5).toFloat(),0f).apply{duration=3000;repeatCount=ObjectAnimator.INFINITE;start()}
  }
  private fun offlineListen(){
   if(!offline||listeningOffline||isFinishing||android.os.Build.VERSION.SDK_INT<31||!SpeechRecognizer.isOnDeviceRecognitionAvailable(this))return
@@ -248,7 +258,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
    mic.postDelayed({if(offline&&!isFinishing&&quizGeneration==quizAtFallback&&bubble.text.startsWith("Lumi đang nghỉ"))bubble.text=quiz[questionIndex%quiz.size].first},2600)
   }
  }
- private fun blinkLoop(){eyeL.postDelayed(object:Runnable{override fun run(){eyeL.alpha=.92f;eyeR.alpha=.92f;eyeL.postDelayed({eyeL.alpha=0f;eyeR.alpha=0f},130);eyeL.postDelayed(this,3200)}},1800)}
+ private fun blinkLoop(){blinkHandler.postDelayed(blinkRunnable,1800)}
  private fun applyDress(){
   val outfit=when(selectedDress){
    1->R.drawable.lumi_dress_sky
@@ -275,5 +285,10 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
    Toast.makeText(this,"Lumi đã thay váy! 💗",Toast.LENGTH_SHORT).show()
   }.setNegativeButton("Đóng",null).show()
  }
- override fun onDestroy(){offline=false;recognizer?.destroy();tts?.shutdown();voice.close();super.onDestroy()}
+ override fun onDestroy(){
+  blinkHandler.removeCallbacksAndMessages(null)
+  floatingAnimator?.cancel();floatingAnimator=null
+  if(::mouth.isInitialized)mouth.animate().cancel()
+  offline=false;recognizer?.destroy();tts?.shutdown();voice.close();super.onDestroy()
+ }
 }
