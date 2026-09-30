@@ -227,8 +227,8 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  }
  override fun onUserTranscript(t:String)=runOnUiThread{if(!offline&&!isFinishing&&t.isNotBlank()&&android.os.SystemClock.elapsedRealtime()-lastStarAwardMs>2500){lastStarAwardMs=android.os.SystemClock.elapsedRealtime();score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score"}}
  override fun onPikaTranscript(t:String)=Unit
- override fun onSpeaking(a:Boolean,l:Float)=runOnUiThread{if(offline||isFinishing)return@runOnUiThread;status.text=if(a)"Lumi is speaking…" else "I'm listening…";mouth.animate().cancel();if(a){mouth.alpha=.88f;mouth.animate().scaleY(1.8f).setDuration(120).withEndAction{mouth.animate().scaleY(.65f).setDuration(120).start()}.start()}else{mouth.alpha=0f;mouth.scaleY=1f}}
- override fun onReady(r:Boolean)=runOnUiThread{if(r&&!isFinishing){lastVoiceReadyAt=android.os.SystemClock.elapsedRealtime();offline=false;answerRow.visibility=View.GONE;status.text="🌸 Lumi đang lắng nghe con!";bubble.visibility=View.GONE}}
+ override fun onSpeaking(a:Boolean,l:Float)=runOnUiThread{if(offline||isFinishing||isDestroyed)return@runOnUiThread;status.text=if(a)"🌸 Lumi đang nói chuyện với con!" else "🎤 Lumi đang nghe con!";mouth.animate().cancel();if(a){mouth.alpha=.88f;mouth.animate().scaleY(1.8f).setDuration(120).withEndAction{if(!isFinishing&&!isDestroyed&&!offline)mouth.animate().scaleY(.65f).setDuration(120).start()}.start()}else{mouth.alpha=0f;mouth.scaleY=1f}}
+ override fun onReady(r:Boolean)=runOnUiThread{if(r&&!isFinishing&&!isDestroyed){lastVoiceReadyAt=android.os.SystemClock.elapsedRealtime();offline=false;answerRow.visibility=View.GONE;status.text="🌸 Lumi đang lắng nghe con!";bubble.visibility=View.GONE}}
  override fun onError(t:String)=runOnUiThread{
   if(isFinishing||isDestroyed||offline)return@runOnUiThread
   geminiFailureMessage=t.take(300)
