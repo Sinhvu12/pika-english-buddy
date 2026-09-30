@@ -198,8 +198,13 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
          val pcm=chunk.second
          var offset=0
          while(offset<pcm.size && playingAudio && workerEpoch==sessionEpoch && generation==audioGeneration){
-          val n=track.write(pcm,offset,pcm.size-offset)
-          if(n<=0)throw IllegalStateException("AudioTrack write failed: $n")
+          // Non-blocking writes let interruption discard stale speech promptly.
+          val n=track.write(pcm,offset,pcm.size-offset,AudioTrack.WRITE_NON_BLOCKING)
+          if(n<0)throw IllegalStateException("AudioTrack write failed: $n")
+          if(n==0){
+           Thread.sleep(10)
+           continue
+          }
           offset+=n
           framesWritten+=n/2L
          }
