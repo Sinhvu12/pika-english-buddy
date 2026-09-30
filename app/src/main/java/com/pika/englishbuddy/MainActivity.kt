@@ -122,7 +122,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   stage.addView(pika,FrameLayout.LayoutParams(-1,-1))
   eyeL=View(this).apply{background=shape(Color.rgb(255,218,220),20);alpha=0f};eyeR=View(this).apply{background=shape(Color.rgb(255,218,220),20);alpha=0f};mouth=View(this).apply{background=shape(Color.rgb(190,45,75),20);alpha=0f}
   stage.addView(eyeL,FrameLayout.LayoutParams(dp(34),dp(11)));stage.addView(eyeR,FrameLayout.LayoutParams(dp(34),dp(11)));stage.addView(mouth,FrameLayout.LayoutParams(dp(22),dp(12)))
-  stage.post{fun pos(v:View,x:Float,y:Float){v.x=stage.width*x-v.layoutParams.width/2f;v.y=stage.height*y-v.layoutParams.height/2f};pos(eyeL,.39f,.31f);pos(eyeR,.61f,.31f);pos(mouth,.50f,.39f);blinkLoop()}
+  stage.post{fun pos(v:View,x:Float,y:Float){v.x=stage.width*x-v.layoutParams.width/2f;v.y=stage.height*y-v.layoutParams.height/2f};pos(eyeL,.39f,.31f);pos(eyeR,.61f,.31f);pos(mouth,.50f,.39f);applyDress();blinkLoop()}
   bubble=TextView(this).apply{text="";textSize=18f;setTextColor(Color.rgb(99,29,71));setTypeface(typeface,Typeface.BOLD);gravity=Gravity.CENTER;background=shape(Color.argb(246,255,255,255),22);elevation=dp(5).toFloat();setPadding(dp(18),dp(13),dp(18),dp(13))}
   stage.addView(bubble,FrameLayout.LayoutParams(-1,-2).apply{gravity=Gravity.TOP;setMargins(dp(20),dp(18),dp(20),0)});bubble.visibility=View.GONE
   status=TextView(this).apply{text="";textSize=14f;setTextColor(Color.rgb(119,76,98));gravity=Gravity.CENTER;setOnLongClickListener{if(geminiFailureMessage.isNotBlank())android.app.AlertDialog.Builder(this@MainActivity).setTitle("Thông tin cho phụ huynh").setMessage(geminiFailureMessage).setPositiveButton("Đóng",null).show();true}}
@@ -274,12 +274,13 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
    10->R.drawable.lumi_dress_rainbow
    else->R.drawable.lumi_dress_pink
   }
-  // Decode a bounded bitmap to avoid exhausting memory on low-end devices.
+  // The 3D sprite pack is optional until all images are included in the APK.
   val file="lumi3d/${names[selectedDress.coerceIn(0,10)]}.webp"
   val bitmap=runCatching{
    assets.open(file).use{stream->
     android.graphics.BitmapFactory.decodeStream(stream,null,android.graphics.BitmapFactory.Options().apply{
-     inPreferredConfig=android.graphics.Bitmap.Config.RGB_565
+     inPreferredConfig=android.graphics.Bitmap.Config.ARGB_8888
+     inSampleSize=1
     })
    }
   }.getOrNull()
