@@ -204,14 +204,18 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
          if(generation!=audioGeneration)continue
          val pcm=chunk.second
          var offset=0
+         var lastWriteProgress=android.os.SystemClock.elapsedRealtime()
          while(offset<pcm.size && playingAudio && workerEpoch==sessionEpoch && generation==audioGeneration){
           // Non-blocking writes let interruption discard stale speech promptly.
           val n=track.write(pcm,offset,pcm.size-offset,AudioTrack.WRITE_NON_BLOCKING)
           if(n<0)throw IllegalStateException("AudioTrack write failed: $n")
           if(n==0){
+           if(android.os.SystemClock.elapsedRealtime()-lastWriteProgress>3000L)
+            throw IllegalStateException("Speaker buffer stalled for 3 seconds")
            Thread.sleep(10)
            continue
           }
+          lastWriteProgress=android.os.SystemClock.elapsedRealtime()
           offset+=n
           framesWritten+=n/2L
          }
