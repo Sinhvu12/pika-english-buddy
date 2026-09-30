@@ -215,6 +215,8 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
   if(isFinishing||isDestroyed||offline)return@runOnUiThread
   geminiFailureMessage=t.take(300)
   val now=android.os.SystemClock.elapsedRealtime()
+  // A stable voice session starts a fresh recovery budget; a rapid failure loop does not.
+  if(lastVoiceReadyAt>0L&&now-lastVoiceReadyAt>=30_000L){retryCount=0;retryWindowStarted=0L;lastVoiceReadyAt=0L}
   if(retryWindowStarted==0L||now-retryWindowStarted>120_000L){retryWindowStarted=now;retryCount=0}
   val technical=t.lowercase(Locale.ROOT)
   val recoverable=technical.contains("network")||technical.contains("websocket")||technical.contains("connection")||technical.contains("closed")||technical.contains("handshake")||technical.contains("timeout")||technical.contains("slow")||technical.contains("audio playback")||technical.contains("sending audio")||technical.contains("microphone stopped")
@@ -234,7 +236,8 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
    fallback()
    status.text="🌸 Mình chơi chọn hình nhé!"
    bubble.text="Lumi đang nghỉ một chút. Mình chọn hình nhé! 💗"
-   mic.postDelayed({if(offline&&!isFinishing&&bubble.text.startsWith("Lumi đang nghỉ"))bubble.text=quiz[questionIndex%quiz.size].first},2600)
+   val quizAtFallback=quizGeneration
+   mic.postDelayed({if(offline&&!isFinishing&&quizGeneration==quizAtFallback&&bubble.text.startsWith("Lumi đang nghỉ"))bubble.text=quiz[questionIndex%quiz.size].first},2600)
   }
  }
  private fun blinkLoop(){eyeL.postDelayed(object:Runnable{override fun run(){eyeL.alpha=.92f;eyeR.alpha=.92f;eyeL.postDelayed({eyeL.alpha=0f;eyeR.alpha=0f},130);eyeL.postDelayed(this,3200)}},1800)}
