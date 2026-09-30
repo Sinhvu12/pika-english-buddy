@@ -128,6 +128,9 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
        main.post{if(micEpoch==sessionEpoch)fail("Voice connection stopped sending audio")}
        break
       }
+     }else if(n==0){
+      // Some devices return zero bytes transiently; avoid a CPU-burning busy loop.
+      try{Thread.sleep(10)}catch(_:InterruptedException){break}
      }else if(n<0){if(recording && micEpoch==sessionEpoch && !intentionalClose)main.post{if(micEpoch==sessionEpoch)fail("Microphone stopped unexpectedly")};break}
     }
    }
