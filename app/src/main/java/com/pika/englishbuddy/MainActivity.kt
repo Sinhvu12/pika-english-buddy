@@ -206,7 +206,15 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  }
  private fun startVoice(){mic.animate().scaleX(.9f).scaleY(.9f).setDuration(100).withEndAction{mic.animate().scaleX(1f).scaleY(1f).duration=140}.start();if(ActivityCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)connectGemini() else ActivityCompat.requestPermissions(this,arrayOf(Manifest.permission.RECORD_AUDIO),7)}
  override fun onRequestPermissionsResult(r:Int,p:Array<out String>,g:IntArray){super.onRequestPermissionsResult(r,p,g);if(r==7&&g.firstOrNull()==PackageManager.PERMISSION_GRANTED)connectGemini()}
- override fun onStatus(t:String)=runOnUiThread{if(!offline&&!isFinishing)status.text=t}
+ override fun onStatus(t:String)=runOnUiThread{
+  if(offline||isFinishing)return@runOnUiThread
+  status.text=when{
+   t.contains("Connecting",true)||t.contains("WebSocket",true)||t.contains("waiting for session",true)->"🌷 Lumi đang chuẩn bị trò chuyện..."
+   t.contains("Listening",true)->"🎤 Lumi đang nghe con!"
+   t.contains("session ended",true)->"🌸 Hẹn gặp lại con nhé!"
+   else->"🌸 Lumi đang ở đây với con!"
+  }
+ }
  override fun onUserTranscript(t:String)=runOnUiThread{if(!offline&&!isFinishing&&t.isNotBlank()&&android.os.SystemClock.elapsedRealtime()-lastStarAwardMs>2500){lastStarAwardMs=android.os.SystemClock.elapsedRealtime();score++;getSharedPreferences("lumi",0).edit().putInt("stars",score).apply();stars.text="⭐ $score"}}
  override fun onPikaTranscript(t:String)=Unit
  override fun onSpeaking(a:Boolean,l:Float)=runOnUiThread{if(offline||isFinishing)return@runOnUiThread;status.text=if(a)"Lumi is speaking…" else "I'm listening…";mouth.animate().cancel();if(a){mouth.alpha=.88f;mouth.animate().scaleY(1.8f).setDuration(120).withEndAction{mouth.animate().scaleY(.65f).setDuration(120).start()}.start()}else{mouth.alpha=0f;mouth.scaleY=1f}}
