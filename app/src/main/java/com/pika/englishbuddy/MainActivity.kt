@@ -93,7 +93,7 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  }.getOrDefault("")
  private fun dp(v:Int)=(v*resources.displayMetrics.density).toInt()
  private fun shape(c:Int,r:Int,stroke:Int=0,sc:Int=Color.TRANSPARENT)=GradientDrawable().apply{setColor(c);cornerRadius=dp(r).toFloat();if(stroke>0)setStroke(dp(stroke),sc)}
- override fun onCreate(b:Bundle?){super.onCreate(b);WindowCompat.setDecorFitsSystemWindows(window,false);window.statusBarColor=Color.TRANSPARENT;window.navigationBarColor=Color.rgb(255,244,248);score=getSharedPreferences("lumi",0).getInt("stars",0);selectedDress=getSharedPreferences("lumi",0).getInt("dress",0).coerceIn(0,4);ui();voice=RealtimeVoiceClient(BuildConfig.PIKA_TOKEN_URL,this);tts=TextToSpeech(this){code->ttsReady=code==TextToSpeech.SUCCESS;if(ttsReady)tts?.language=Locale.US}}
+ override fun onCreate(b:Bundle?){super.onCreate(b);WindowCompat.setDecorFitsSystemWindows(window,false);window.statusBarColor=Color.TRANSPARENT;window.navigationBarColor=Color.rgb(255,244,248);score=getSharedPreferences("lumi",0).getInt("stars",0);selectedDress=getSharedPreferences("lumi",0).getInt("dress",0).coerceIn(0,10);ui();voice=RealtimeVoiceClient(BuildConfig.PIKA_TOKEN_URL,this);tts=TextToSpeech(this){code->ttsReady=code==TextToSpeech.SUCCESS;if(ttsReady)tts?.language=Locale.US}}
  private fun ui(){
   val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(18),0,dp(18),dp(12));setBackgroundColor(Color.rgb(255,246,250))}
   ViewCompat.setOnApplyWindowInsetsListener(root){v,i->val s=i.getInsets(WindowInsetsCompat.Type.systemBars());v.setPadding(dp(18),s.top+dp(8),dp(18),s.bottom+dp(10));i}
@@ -255,22 +255,25 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
    2->R.drawable.lumi_dress_sunny
    3->R.drawable.lumi_dress_mint
    4->R.drawable.lumi_dress_purple
+   5->R.drawable.lumi_dress_red
+   6->R.drawable.lumi_dress_orange
+   7->R.drawable.lumi_dress_teal
+   8->R.drawable.lumi_dress_navy
+   9->R.drawable.lumi_dress_white
+   10->R.drawable.lumi_dress_rainbow
    else->R.drawable.lumi_dress_pink
   }
   pika.setImageResource(outfit)
  }
  private fun wardrobe(){
-  val need=intArrayOf(0,10,20,35,50)
-  val names=arrayOf("🌸 Pink Princess","💙 Sky Blue","💛 Sunny Yellow","🌿 Mint Green","💜 Purple Sparkle")
-  val options=names.mapIndexed{i,n->n+if(i==selectedDress)"  ✓ Đang mặc" else if(score>=need[i])"  ✓ Đã mở khóa" else "  🔒 ${need[i]} ⭐"}.toTypedArray()
-  android.app.AlertDialog.Builder(this).setTitle("Lumi's Wardrobe").setItems(options){_,i->
-   if(score>=need[i]){
-    selectedDress=i
-    getSharedPreferences("lumi",0).edit().putInt("dress",i).apply()
-    applyDress()
-    Toast.makeText(this,"Lumi đã thay váy! 💗",Toast.LENGTH_SHORT).show()
-   }else Toast.makeText(this,"Cần ${need[i]} sao để mở váy này ⭐",Toast.LENGTH_SHORT).show()
-  }.setNegativeButton("Close",null).show()
+  val names=arrayOf("🌸 Hồng","💙 Xanh da trời","💛 Vàng","🌿 Xanh lá","💜 Tím","❤️ Đỏ","🧡 Cam","🩵 Xanh ngọc","🔵 Xanh đậm","🤍 Trắng","🌈 Cầu vồng")
+  val options=names.mapIndexed{i,n->n+if(i==selectedDress)"  ✓ Đang mặc" else ""}.toTypedArray()
+  android.app.AlertDialog.Builder(this).setTitle("Tủ váy của Lumi 👗").setItems(options){_,i->
+   selectedDress=i
+   getSharedPreferences("lumi",0).edit().putInt("dress",i).apply()
+   applyDress()
+   Toast.makeText(this,"Lumi đã thay váy! 💗",Toast.LENGTH_SHORT).show()
+  }.setNegativeButton("Đóng",null).show()
  }
  override fun onDestroy(){offline=false;recognizer?.destroy();tts?.shutdown();voice.close();super.onDestroy()}
 }
