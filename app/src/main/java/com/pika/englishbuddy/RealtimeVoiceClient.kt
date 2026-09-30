@@ -187,6 +187,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
        var frameBase=track.playbackHeadPosition.toLong() and 0xffffffffL
        while(playingAudio && workerEpoch==sessionEpoch){
         if(playbackResetRequested){
+         if(workerEpoch!=sessionEpoch)break
          playbackResetRequested=false
          track.pause()
          track.flush()
@@ -195,6 +196,9 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
          frameBase=track.playbackHeadPosition.toLong() and 0xffffffffL
         }
         val chunk=audioQueue.poll(35,TimeUnit.MILLISECONDS)
+        // An old worker may wake up after a reconnect. Never consume or
+        // acknowledge audio belonging to the new session.
+        if(workerEpoch!=sessionEpoch || !playingAudio)break
         if(chunk!=null){
          val generation=chunk.first
          if(generation!=audioGeneration)continue
