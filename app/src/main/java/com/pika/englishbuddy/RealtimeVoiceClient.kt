@@ -53,7 +53,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   val epoch=sessionEpoch
   audioQueue.clear();audioTurnEnded=false;assistantSpeaking=false;lastSpeakingNotification=false;suppressMicUntil=0L;playbackResetRequested=false
   timeout?.let{main.removeCallbacks(it)}
-  timeout=Runnable{if(connecting&&!connected)fail(if(socketOpened)"Gemini WebSocket opened but setup was not confirmed within 30s" else "Could not open Gemini WebSocket within 30s; check network, VPN or firewall")}
+  timeout=Runnable{if(epoch==sessionEpoch&&connecting&&!connected)fail(if(socketOpened)"Gemini WebSocket opened but setup was not confirmed within 30s" else "Could not open Gemini WebSocket within 30s; check network, VPN or firewall")}
   main.postDelayed(timeout!!,30000)
   listener.onStatus("Connecting to Gemini Live…")
   val url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key="+apiKey.trim()
@@ -206,13 +206,13 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
         }else if(audioTurnEnded && audioQueue.isEmpty()){
          // A write only fills AudioTrack's buffer: wait for the speaker to
          // actually finish playing the buffered frames before opening the mic.
-         val played=(track.playbackHeadPosition.toLong() and 0xffffffffL)-frameBase
-         if(played>=framesWritten){
+         val played=((track.playbackHeadPosition.toLong() and 0xffffffffL)-frameBase) and 0xffffffffL
+         if(workerEpoch==sessionEpoch && played>=framesWritten){
           audioTurnEnded=false
           assistantSpeaking=false
           suppressMicUntil=android.os.SystemClock.elapsedRealtime()+180
           lastSpeakingNotification=false
-          listener.onSpeaking(false,0f)
+          if(workerEpoch==sessionEpoch)listener.onSpeaking(false,0f)
          }
         }
        }
