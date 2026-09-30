@@ -30,7 +30,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
  private var ws:WebSocket?=null
  private var recorder:AudioRecord?=null
  private var player:AudioTrack?=null
- private val audioQueue=LinkedBlockingQueue<ByteArray>()
+ private val audioQueue=LinkedBlockingQueue<Pair<Int,ByteArray>>()
  @Volatile private var audioTurnEnded=false
  @Volatile private var audioGeneration=0
  @Volatile private var suppressMicUntil=0L
@@ -193,10 +193,12 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
         }
         val chunk=audioQueue.poll(35,TimeUnit.MILLISECONDS)
         if(chunk!=null){
-         val generation=audioGeneration
+         val generation=chunk.first
+         if(generation!=audioGeneration)continue
+         val pcm=chunk.second
          var offset=0
-         while(offset<chunk.size && playingAudio && workerEpoch==sessionEpoch && generation==audioGeneration){
-          val n=track.write(chunk,offset,chunk.size-offset)
+         while(offset<pcm.size && playingAudio && workerEpoch==sessionEpoch && generation==audioGeneration){
+          val n=track.write(pcm,offset,pcm.size-offset)
           if(n<=0)throw IllegalStateException("AudioTrack write failed: $n")
           offset+=n
           framesWritten+=n/2L
@@ -232,7 +234,7 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
    fail("Audio playback is too far behind; please reconnect")
    return
   }
-  audioQueue.offer(bytes)
+  audioQueue.offer(audioGeneration to bytes)
   if(!lastSpeakingNotification){lastSpeakingNotification=true;listener.onSpeaking(true,.5f)}
  }
  fun close(){
