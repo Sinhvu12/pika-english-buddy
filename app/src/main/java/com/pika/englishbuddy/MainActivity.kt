@@ -260,7 +260,8 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
  }
  private fun blinkLoop(){blinkHandler.postDelayed(blinkRunnable,1800)}
  private fun applyDress(){
-  val outfit=when(selectedDress){
+  val names=arrayOf("hong","xanh_da_troi","vang","xanh_la","tim","do","cam","xanh_ngoc","xanh_dam","trang","cau_vong")
+  val fallback=when(selectedDress){
    1->R.drawable.lumi_dress_sky
    2->R.drawable.lumi_dress_sunny
    3->R.drawable.lumi_dress_mint
@@ -273,7 +274,22 @@ class MainActivity:AppCompatActivity(),RealtimeVoiceClient.Listener{
    10->R.drawable.lumi_dress_rainbow
    else->R.drawable.lumi_dress_pink
   }
-  pika.setImageResource(outfit)
+  // Decode a bounded bitmap to avoid exhausting memory on low-end devices.
+  val file="lumi3d/${names[selectedDress.coerceIn(0,10)]}.webp"
+  val bitmap=runCatching{
+   assets.open(file).use{stream->
+    android.graphics.BitmapFactory.decodeStream(stream,null,android.graphics.BitmapFactory.Options().apply{
+     inPreferredConfig=android.graphics.Bitmap.Config.RGB_565
+    })
+   }
+  }.getOrNull()
+  if(bitmap!=null){
+   pika.setImageBitmap(bitmap)
+   if(::eyeL.isInitialized){eyeL.visibility=View.GONE;eyeR.visibility=View.GONE;mouth.visibility=View.GONE}
+  }else{
+   pika.setImageResource(fallback)
+   if(::eyeL.isInitialized){eyeL.visibility=View.VISIBLE;eyeR.visibility=View.VISIBLE;mouth.visibility=View.VISIBLE}
+  }
  }
  private fun wardrobe(){
   val names=arrayOf("🌸 Hồng","💙 Xanh da trời","💛 Vàng","🌿 Xanh lá","💜 Tím","❤️ Đỏ","🧡 Cam","🩵 Xanh ngọc","🔵 Xanh đậm","🤍 Trắng","🌈 Cầu vồng")
