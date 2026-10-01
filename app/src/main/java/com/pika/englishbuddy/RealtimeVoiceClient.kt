@@ -59,15 +59,18 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
   val url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key="+apiKey.trim()
   ws=http.newWebSocket(Request.Builder().url(url).build(),object:WebSocketListener(){
    override fun onOpen(w:WebSocket,r:Response){if(epoch!=sessionEpoch)return;socketOpened=true;listener.onStatus("Gemini WebSocket open · waiting for session…");configure(w)}
-   override fun onMessage(w:WebSocket,text:String){if(epoch==sessionEpoch)receive(text)}
-   override fun onMessage(w:WebSocket,bytes:ByteString){if(epoch==sessionEpoch)receive(bytes.utf8())}
+   override fun onMessage(w:WebSocket,text:String){if(epoch==sessionEpoch)receive(text,epoch)}
+   override fun onMessage(w:WebSocket,bytes:ByteString){if(epoch==sessionEpoch)receive(bytes.utf8(),epoch)}
    override fun onFailure(w:WebSocket,t:Throwable,r:Response?){if(epoch==sessionEpoch&&!intentionalClose)fail("Gemini handshake failed: "+(r?.code?.toString()?:t.javaClass.simpleName)+" "+(t.message?:"").take(90))}
    override fun onClosed(w:WebSocket,code:Int,reason:String){if(epoch==sessionEpoch&&!intentionalClose)fail("Gemini closed connection: $code $reason")}
    override fun onClosing(w:WebSocket,code:Int,reason:String){if(epoch==sessionEpoch&&!intentionalClose)fail("Gemini rejected session: $code $reason")}
   })
  }
- private fun receive(payload:String){
-  runCatching{handle(JSONObject(payload))}.onFailure{fail("Gemini message parse error: "+it.javaClass.simpleName)}
+ private fun receive(payload:String,epoch:Int){
+  runCatching{
+   val message=JSONObject(payload)
+   if(epoch==sessionEpoch&&!intentionalClose)handle(message,epoch)
+  }.onFailure{if(epoch==sessionEpoch&&!intentionalClose)fail("Gemini message parse error: "+it.javaClass.simpleName)}
  }
  private fun fail(reason:String){
   if(failed||intentionalClose)return
@@ -136,32 +139,36 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
    }
   }catch(e:Exception){fail("Microphone cannot start") }
  }
- private fun handle(j:JSONObject){
+ private fun handle(j:JSONObject,epoch:Int){
+  if(epoch!=sessionEpoch||intentionalClose)return
   if(j.has("setupComplete")||j.has("setup_complete")){
    connecting=false;connected=true
    timeout?.let{main.removeCallbacks(it)};timeout=null
    startMic()
-   if(!connected)return
+   if(epoch!=sessionEpoch||!connected)return
    listener.onReady(true)
    val greetingPart=JSONObject().put("text","Say only: Hi, friend! [pause] Want to play with me? Speak slowly, warmly and naturally.")
    val greetingTurn=JSONObject().put("role","user").put("parts",JSONArray().put(greetingPart))
    val hello=JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(greetingTurn)).put("turnComplete",true))
-   if(ws?.send(hello.toString())!=true)fail("Could not start the voice conversation")
+   if(epoch==sessionEpoch&&ws?.send(hello.toString())!=true)fail("Could not start the voice conversation")
    return
   }
+  if(epoch!=sessionEpoch||intentionalClose)return
   val error=j.optJSONObject("error")
   if(error!=null){fail(error.optString("message","Gemini API error"));return}
   val content=j.optJSONObject("serverContent")?:j.optJSONObject("server_content")?:return
   content.optJSONObject("inputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onUserTranscript(it)}
   content.optJSONObject("outputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onPikaTranscript(it)}
+  if(epoch!=sessionEpoch||intentionalClose)return
   if(content.optBoolean("interrupted")){audioGeneration++;audioQueue.clear();audioTurnEnded=false;playbackResetRequested=true;assistantSpeaking=false;suppressMicUntil=android.os.SystemClock.elapsedRealtime()+350;lastSpeakingNotification=false;listener.onSpeaking(false,0f)}
   val parts=content.optJSONObject("modelTurn")?.optJSONArray("parts")
   if(parts!=null)for(i in 0 until parts.length()){
    val inline=parts.optJSONObject(i)?.optJSONObject("inlineData")?:continue
    val data=inline.optString("data")
+   if(epoch!=sessionEpoch||intentionalClose)return
    if(data.isNotBlank())play(Base64.decode(data,Base64.DEFAULT))
   }
-  if(content.optBoolean("turnComplete"))audioTurnEnded=true
+  if(epoch==sessionEpoch&&content.optBoolean("turnComplete"))audioTurnEnded=true
  }
  private fun play(bytes:ByteArray){
   if(!connected)return
@@ -185,6 +192,8 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
        track.play()
        var framesWritten=0L
        var frameBase=track.playbackHeadPosition.toLong() and 0xffffffffL
+       var lastDrainProgress=android.os.SystemClock.elapsedRealtime()
+       var lastPlayedFrames=0L
        while(playingAudio && workerEpoch==sessionEpoch){
         if(playbackResetRequested){
          if(workerEpoch!=sessionEpoch)break
@@ -194,6 +203,8 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
          track.play()
          framesWritten=0L
          frameBase=track.playbackHeadPosition.toLong() and 0xffffffffL
+         lastPlayedFrames=0L
+         lastDrainProgress=android.os.SystemClock.elapsedRealtime()
         }
         val chunk=audioQueue.poll(35,TimeUnit.MILLISECONDS)
         // An old worker may wake up after a reconnect. Never consume or
@@ -223,6 +234,12 @@ class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener
          // A write only fills AudioTrack's buffer: wait for the speaker to
          // actually finish playing the buffered frames before opening the mic.
          val played=((track.playbackHeadPosition.toLong() and 0xffffffffL)-frameBase) and 0xffffffffL
+         if(played!=lastPlayedFrames){
+          lastPlayedFrames=played
+          lastDrainProgress=android.os.SystemClock.elapsedRealtime()
+         }else if(framesWritten>played && android.os.SystemClock.elapsedRealtime()-lastDrainProgress>3000L){
+          throw IllegalStateException("Speaker playback head stalled for 3 seconds")
+         }
          if(workerEpoch==sessionEpoch && played>=framesWritten){
           audioTurnEnded=false
           assistantSpeaking=false
