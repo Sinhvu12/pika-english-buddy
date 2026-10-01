@@ -2,28 +2,287 @@ package com.pika.englishbuddy
 import android.media.*
 import android.util.Base64
 import okhttp3.*
-import org.json.JSONArray
+import okio.ByteString
 import org.json.JSONObject
-import java.io.IOException
+import org.json.JSONArray
 import kotlin.concurrent.thread
-import kotlin.math.abs
+import android.os.Handler
+import android.os.Looper
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.LinkedBlockingQueue
 
-class RealtimeVoiceClient(private val tokenUrl:String,private val listener:Listener){
- interface Listener{fun onStatus(text:String);fun onUserTranscript(text:String);fun onPikaTranscript(text:String);fun onSpeaking(active:Boolean,level:Float);fun onReady(ready:Boolean);fun onError(text:String)}
- private val http=OkHttpClient();private var ws:WebSocket?=null;private var recorder:AudioRecord?=null;private var player:AudioTrack?=null;@Volatile private var recording=false;private val rate=24000
- fun connect(){if(tokenUrl.contains("example.invalid")){listener.onError("Voice backend is not configured yet.");return};listener.onStatus("Pika is waking up…");http.newCall(Request.Builder().url(tokenUrl).build()).enqueue(object:Callback{
-  override fun onFailure(c:Call,e:IOException)=listener.onError("Pika cannot connect.")
-  override fun onResponse(c:Call,r:Response){r.use{val j=runCatching{JSONObject(it.body?.string().orEmpty())}.getOrNull();val key=j?.optString("value").orEmpty().ifBlank{j?.optJSONObject("client_secret")?.optString("value").orEmpty()};if(key.isBlank())listener.onError("Pika could not start a voice session.") else socket(key)}}})}
- private fun socket(key:String){ws=http.newWebSocket(Request.Builder().url("wss://api.openai.com/v1/realtime?model=gpt-realtime").header("Authorization","Bearer $key").build(),object:WebSocketListener(){
-  override fun onOpen(w:WebSocket,r:Response){configure();startMic()}
-  override fun onMessage(w:WebSocket,text:String){runCatching{handle(JSONObject(text))}}
-  override fun onFailure(w:WebSocket,t:Throwable,r:Response?){listener.onError("Voice connection was lost.")}})}
- private fun configure(){val prompt="You are Pika, a warm English-speaking robot friend for one child age 5-8. Use very simple natural English, one or two short sentences and one question per turn. Praise effort. Gently model corrections. Never ask for identifying information. Avoid adult, dangerous, political, commercial or frightening topics. Do not mention scores or rewards unless asked."
-  val input=JSONObject().put("format",JSONObject().put("type","audio/pcm").put("rate",rate)).put("transcription",JSONObject().put("model","gpt-4o-mini-transcribe").put("language","en")).put("turn_detection",JSONObject().put("type","semantic_vad").put("eagerness","low").put("create_response",true).put("interrupt_response",true))
-  val session=JSONObject().put("type","realtime").put("output_modalities",JSONArray().put("audio")).put("instructions",prompt).put("audio",JSONObject().put("input",input).put("output",JSONObject().put("format",JSONObject().put("type","audio/pcm").put("rate",rate)).put("voice","marin")))
-  ws?.send(JSONObject().put("type","session.update").put("session",session).toString());listener.onReady(true)}
- private fun startMic(){val min=AudioRecord.getMinBufferSize(rate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT);recorder=AudioRecord.Builder().setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION).setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build()).setBufferSizeInBytes(maxOf(min,9600)).build();recording=true;recorder?.startRecording();listener.onStatus("Just talk to Pika!");thread{val b=ByteArray(4800);while(recording){val n=recorder?.read(b,0,b.size)?:-1;if(n>0)ws?.send(JSONObject().put("type","input_audio_buffer.append").put("audio",Base64.encodeToString(b,0,n,Base64.NO_WRAP)).toString())}}}
- private fun handle(e:JSONObject){when(e.optString("type")){"conversation.item.input_audio_transcription.completed"->listener.onUserTranscript(e.optString("transcript"));"response.output_audio_transcript.delta"->listener.onPikaTranscript(e.optString("delta"));"response.output_audio.delta"->play(Base64.decode(e.optString("delta"),Base64.DEFAULT));"response.output_audio.done","response.done"->listener.onSpeaking(false,0f)}}
- private fun play(b:ByteArray){if(player==null){val min=AudioTrack.getMinBufferSize(rate,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT);player=AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()).setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build()).setBufferSizeInBytes(maxOf(min,38400)).setTransferMode(AudioTrack.MODE_STREAM).build().also{it.play()}};player?.write(b,0,b.size);listener.onSpeaking(true,.5f)}
- fun close(){recording=false;try{recorder?.stop()}catch(_:Exception){};recorder?.release();player?.release();ws?.close(1000,"bye")}
+class RealtimeVoiceClient(private val unusedTokenUrl:String,private val listener:Listener){
+ interface Listener{
+  fun onStatus(text:String)
+  fun onUserTranscript(text:String)
+  fun onPikaTranscript(text:String)
+  fun onSpeaking(active:Boolean,level:Float)
+  fun onReady(ready:Boolean)
+  fun onError(text:String)
+ }
+ private val http=OkHttpClient.Builder().connectTimeout(10,TimeUnit.SECONDS).readTimeout(0,TimeUnit.SECONDS).build()
+ private val main=Handler(Looper.getMainLooper())
+ private var timeout:Runnable?=null
+ @Volatile private var intentionalClose=false
+ @Volatile private var connecting=false
+ @Volatile private var failed=false
+ @Volatile private var socketOpened=false
+ private var ws:WebSocket?=null
+ private var recorder:AudioRecord?=null
+ private var player:AudioTrack?=null
+ private val audioQueue=LinkedBlockingQueue<Pair<Int,ByteArray>>()
+ @Volatile private var audioTurnEnded=false
+ @Volatile private var audioGeneration=0
+ @Volatile private var suppressMicUntil=0L
+ @Volatile private var assistantSpeaking=false
+ @Volatile private var playingAudio=false
+ private var audioWorker:Thread?=null
+ @Volatile private var micWorker:Thread?=null
+ @Volatile private var lastSpeakingNotification=false
+ @Volatile private var sessionEpoch=0
+ @Volatile private var playbackErrorReported=false
+ @Volatile private var playbackResetRequested=false
+ @Volatile private var recording=false
+ @Volatile private var connected=false
+ private val inputRate=16000
+ private val outputRate=24000
+ fun connect(apiKey:String){
+  if(apiKey.isBlank()){listener.onError("Enter your Gemini API key first.");return}
+  if(connected||connecting){close();listener.onStatus("Voice session ended.");return}
+  intentionalClose=false;failed=false;connecting=true;socketOpened=false;playbackErrorReported=false;sessionEpoch++
+  val epoch=sessionEpoch
+  audioQueue.clear();audioTurnEnded=false;assistantSpeaking=false;lastSpeakingNotification=false;suppressMicUntil=0L;playbackResetRequested=false
+  timeout?.let{main.removeCallbacks(it)}
+  timeout=Runnable{if(epoch==sessionEpoch&&connecting&&!connected)fail(if(socketOpened)"Gemini WebSocket opened but setup was not confirmed within 30s" else "Could not open Gemini WebSocket within 30s; check network, VPN or firewall")}
+  main.postDelayed(timeout!!,30000)
+  listener.onStatus("Connecting to Gemini Live…")
+  val url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key="+apiKey.trim()
+  ws=http.newWebSocket(Request.Builder().url(url).build(),object:WebSocketListener(){
+   override fun onOpen(w:WebSocket,r:Response){if(epoch!=sessionEpoch)return;socketOpened=true;listener.onStatus("Gemini WebSocket open · waiting for session…");configure(w)}
+   override fun onMessage(w:WebSocket,text:String){if(epoch==sessionEpoch)receive(text,epoch)}
+   override fun onMessage(w:WebSocket,bytes:ByteString){if(epoch==sessionEpoch)receive(bytes.utf8(),epoch)}
+   override fun onFailure(w:WebSocket,t:Throwable,r:Response?){if(epoch==sessionEpoch&&!intentionalClose)fail("Gemini handshake failed: "+(r?.code?.toString()?:t.javaClass.simpleName)+" "+(t.message?:"").take(90))}
+   override fun onClosed(w:WebSocket,code:Int,reason:String){if(epoch==sessionEpoch&&!intentionalClose)fail("Gemini closed connection: $code $reason")}
+   override fun onClosing(w:WebSocket,code:Int,reason:String){if(epoch==sessionEpoch&&!intentionalClose)fail("Gemini rejected session: $code $reason")}
+  })
+ }
+ private fun receive(payload:String,epoch:Int){
+  runCatching{
+   val message=JSONObject(payload)
+   if(epoch==sessionEpoch&&!intentionalClose)handle(message,epoch)
+  }.onFailure{if(epoch==sessionEpoch&&!intentionalClose)fail("Gemini message parse error: "+it.javaClass.simpleName)}
+ }
+ private fun fail(reason:String){
+  if(failed||intentionalClose)return
+  failed=true
+  timeout?.let{main.removeCallbacks(it)};timeout=null
+  close()
+  listener.onError(reason)
+ }
+ private fun configure(w:WebSocket){
+  val prompt="You are Lumi, a kind, playful bilingual Vietnamese-English speaking friend for a young Vietnamese child learning English. The child may speak English, Vietnamese, mixed language, softly, hesitantly or with imperfect pronunciation. Understand the meaning rather than demanding exact words. Respond naturally to what the child actually says. Use short, clear, warm spoken English at a relaxed pace, usually 3 to 8 words per sentence, with small natural pauses. Do not drill the same question repeatedly or make the child repeat a phrase unless they want to. If the child says 'con không hiểu', 'không biết', 'what?', 'hả?', 'I don't know', asks for Vietnamese, or sounds confused, gently explain the last question in simple Vietnamese (one brief sentence), then give one very easy English example and let them answer in either language. If the child hesitates, encourage them with a simple example or offer two easy choices, without pressure. Acknowledge their answer before changing the topic. Ask at most one question per turn; sometimes just comment or celebrate instead of asking. When the child speaks Vietnamese, reply briefly in Vietnamese and introduce one easy English word naturally. Never demand personal details such as full name, location, school or contact information. Never tell the child to move closer to the phone. Avoid unsafe topics and long monologues. Your role is a supportive friend, not a quiz machine."
+  val setup=JSONObject().put("model","models/gemini-2.5-flash-native-audio-preview-12-2025")
+   .put("generationConfig",JSONObject().put("responseModalities",JSONArray().put("AUDIO"))
+    .put("speechConfig",JSONObject().put("voiceConfig",JSONObject().put("prebuiltVoiceConfig",JSONObject().put("voiceName","Leda")))))
+   .put("systemInstruction",JSONObject().put("parts",JSONArray().put(JSONObject().put("text",prompt))))
+   .put("inputAudioTranscription",JSONObject())
+   .put("outputAudioTranscription",JSONObject())
+  if(!w.send(JSONObject().put("setup",setup).toString()))fail("Could not send Gemini session setup")
+ }
+ private fun startMic(){
+  if(recording)return
+  if(!connected)return
+  try{
+   val min=AudioRecord.getMinBufferSize(inputRate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT)
+   if(min<=0)throw IllegalStateException("Unsupported microphone format")
+   recorder=AudioRecord.Builder().setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+    .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(inputRate).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
+    .setBufferSizeInBytes(maxOf(min,6400)).build()
+   if(recorder?.state!=AudioRecord.STATE_INITIALIZED)throw IllegalStateException("Microphone unavailable")
+   recorder?.startRecording()
+   if(recorder?.recordingState!=AudioRecord.RECORDSTATE_RECORDING)throw IllegalStateException("Microphone did not start")
+   recording=true
+   listener.onStatus("Listening…")
+   val activeRecorder=recorder ?: throw IllegalStateException("Microphone missing")
+   val micEpoch=sessionEpoch
+   micWorker=thread(name="gemini-mic"){
+    val buf=ByteArray(3200)
+    var congestedChunks=0
+    while(recording && micEpoch==sessionEpoch){
+     val n=try{activeRecorder.read(buf,0,buf.size)}catch(_:Exception){-1}
+     if(n>0 && connected && micEpoch==sessionEpoch && !assistantSpeaking && android.os.SystemClock.elapsedRealtime()>=suppressMicUntil){
+      val audio=JSONObject().put("mimeType","audio/pcm;rate=16000").put("data",Base64.encodeToString(buf,0,n,Base64.NO_WRAP))
+      val socket=ws
+      if(socket==null){
+       main.post{if(micEpoch==sessionEpoch)fail("Voice connection is unavailable")}
+       break
+      }
+      if(socket.queueSize()>=256_000L){
+       // Do not silently discard a child's speech indefinitely when upload stalls.
+       congestedChunks++
+       if(congestedChunks>=15){
+        main.post{if(micEpoch==sessionEpoch)fail("Network is too slow to hear clearly; please reconnect")}
+        break
+       }
+       continue
+      }
+      congestedChunks=0
+      if(!socket.send(JSONObject().put("realtimeInput",JSONObject().put("audio",audio)).toString())){
+       main.post{if(micEpoch==sessionEpoch)fail("Voice connection stopped sending audio")}
+       break
+      }
+     }else if(n==0){
+      // Some devices return zero bytes transiently; avoid a CPU-burning busy loop.
+      try{Thread.sleep(10)}catch(_:InterruptedException){break}
+     }else if(n<0){if(recording && micEpoch==sessionEpoch && !intentionalClose)main.post{if(micEpoch==sessionEpoch)fail("Microphone stopped unexpectedly")};break}
+    }
+   }
+  }catch(e:Exception){fail("Microphone cannot start") }
+ }
+ private fun handle(j:JSONObject,epoch:Int){
+  if(epoch!=sessionEpoch||intentionalClose)return
+  if(j.has("setupComplete")||j.has("setup_complete")){
+   connecting=false;connected=true
+   timeout?.let{main.removeCallbacks(it)};timeout=null
+   startMic()
+   if(epoch!=sessionEpoch||!connected)return
+   listener.onReady(true)
+   val greetingPart=JSONObject().put("text","Say only: Hi, friend! [pause] Want to play with me? Speak slowly, warmly and naturally.")
+   val greetingTurn=JSONObject().put("role","user").put("parts",JSONArray().put(greetingPart))
+   val hello=JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(greetingTurn)).put("turnComplete",true))
+   if(epoch==sessionEpoch&&ws?.send(hello.toString())!=true)fail("Could not start the voice conversation")
+   return
+  }
+  if(epoch!=sessionEpoch||intentionalClose)return
+  val error=j.optJSONObject("error")
+  if(error!=null){fail(error.optString("message","Gemini API error"));return}
+  val content=j.optJSONObject("serverContent")?:j.optJSONObject("server_content")?:return
+  content.optJSONObject("inputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onUserTranscript(it)}
+  content.optJSONObject("outputTranscription")?.optString("text")?.takeIf{it.isNotBlank()}?.let{listener.onPikaTranscript(it)}
+  if(epoch!=sessionEpoch||intentionalClose)return
+  if(content.optBoolean("interrupted")){audioGeneration++;audioQueue.clear();audioTurnEnded=false;playbackResetRequested=true;assistantSpeaking=false;suppressMicUntil=android.os.SystemClock.elapsedRealtime()+350;lastSpeakingNotification=false;listener.onSpeaking(false,0f)}
+  val parts=content.optJSONObject("modelTurn")?.optJSONArray("parts")
+  if(parts!=null)for(i in 0 until parts.length()){
+   val inline=parts.optJSONObject(i)?.optJSONObject("inlineData")?:continue
+   val data=inline.optString("data")
+   if(epoch!=sessionEpoch||intentionalClose)return
+   if(data.isNotBlank())play(Base64.decode(data,Base64.DEFAULT))
+  }
+  if(epoch==sessionEpoch&&content.optBoolean("turnComplete"))audioTurnEnded=true
+ }
+ private fun play(bytes:ByteArray){
+  if(!connected)return
+  if(!playingAudio){
+   synchronized(audioQueue){
+    if(!playingAudio){
+     playingAudio=true
+     val workerEpoch=sessionEpoch
+     audioWorker=thread(name="gemini-audio",isDaemon=true){
+      var localTrack:AudioTrack?=null
+      try{
+       val min=AudioTrack.getMinBufferSize(outputRate,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT)
+       if(min<=0)throw IllegalStateException("Unsupported speaker format")
+       val track=AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+        .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(outputRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+        .setBufferSizeInBytes(maxOf(min,24000)).setTransferMode(AudioTrack.MODE_STREAM).build()
+       localTrack=track
+       if(track.state!=AudioTrack.STATE_INITIALIZED)throw IllegalStateException("Speaker unavailable")
+       if(workerEpoch!=sessionEpoch){track.release();localTrack=null;return@thread}
+       player=track
+       track.play()
+       var framesWritten=0L
+       var frameBase=track.playbackHeadPosition.toLong() and 0xffffffffL
+       var lastDrainProgress=android.os.SystemClock.elapsedRealtime()
+       var lastPlayedFrames=0L
+       while(playingAudio && workerEpoch==sessionEpoch){
+        if(playbackResetRequested){
+         if(workerEpoch!=sessionEpoch)break
+         playbackResetRequested=false
+         track.pause()
+         track.flush()
+         track.play()
+         framesWritten=0L
+         frameBase=track.playbackHeadPosition.toLong() and 0xffffffffL
+         lastPlayedFrames=0L
+         lastDrainProgress=android.os.SystemClock.elapsedRealtime()
+        }
+        val chunk=audioQueue.poll(35,TimeUnit.MILLISECONDS)
+        // An old worker may wake up after a reconnect. Never consume or
+        // acknowledge audio belonging to the new session.
+        if(workerEpoch!=sessionEpoch || !playingAudio)break
+        if(chunk!=null){
+         val generation=chunk.first
+         if(generation!=audioGeneration)continue
+         val pcm=chunk.second
+         var offset=0
+         var lastWriteProgress=android.os.SystemClock.elapsedRealtime()
+         while(offset<pcm.size && playingAudio && workerEpoch==sessionEpoch && generation==audioGeneration){
+          // Non-blocking writes let interruption discard stale speech promptly.
+          val n=track.write(pcm,offset,pcm.size-offset,AudioTrack.WRITE_NON_BLOCKING)
+          if(n<0)throw IllegalStateException("AudioTrack write failed: $n")
+          if(n==0){
+           if(android.os.SystemClock.elapsedRealtime()-lastWriteProgress>3000L)
+            throw IllegalStateException("Speaker buffer stalled for 3 seconds")
+           Thread.sleep(10)
+           continue
+          }
+          lastWriteProgress=android.os.SystemClock.elapsedRealtime()
+          offset+=n
+          framesWritten+=n/2L
+         }
+        }else if(audioTurnEnded && audioQueue.isEmpty()){
+         // A write only fills AudioTrack's buffer: wait for the speaker to
+         // actually finish playing the buffered frames before opening the mic.
+         val played=((track.playbackHeadPosition.toLong() and 0xffffffffL)-frameBase) and 0xffffffffL
+         if(played!=lastPlayedFrames){
+          lastPlayedFrames=played
+          lastDrainProgress=android.os.SystemClock.elapsedRealtime()
+         }else if(framesWritten>played && android.os.SystemClock.elapsedRealtime()-lastDrainProgress>3000L){
+          throw IllegalStateException("Speaker playback head stalled for 3 seconds")
+         }
+         if(workerEpoch==sessionEpoch && played>=framesWritten){
+          audioTurnEnded=false
+          assistantSpeaking=false
+          suppressMicUntil=android.os.SystemClock.elapsedRealtime()+180
+          lastSpeakingNotification=false
+          if(workerEpoch==sessionEpoch)listener.onSpeaking(false,0f)
+         }
+        }
+       }
+      }catch(_:InterruptedException){}catch(e:Exception){
+       if(workerEpoch==sessionEpoch && !intentionalClose && !playbackErrorReported){playbackErrorReported=true;main.post{if(workerEpoch==sessionEpoch)fail("Audio playback failed: "+(e.message?:"device audio error").take(90))}}
+      }finally{
+       try{localTrack?.stop()}catch(_:Exception){}
+       try{localTrack?.release()}catch(_:Exception){}
+       if(player===localTrack)player=null
+      }
+     }
+    }
+   }
+  }
+  audioTurnEnded=false
+  assistantSpeaking=true
+  // Do not silently accumulate minutes of stale speech if the device cannot play fast enough.
+  if(audioQueue.size>=80){
+   fail("Audio playback is too far behind; please reconnect")
+   return
+  }
+  audioQueue.offer(audioGeneration to bytes)
+  if(!lastSpeakingNotification){lastSpeakingNotification=true;listener.onSpeaking(true,.5f)}
+ }
+ fun close(){
+  intentionalClose=true;connecting=false;sessionEpoch++
+  timeout?.let{main.removeCallbacks(it)};timeout=null
+  recording=false;connected=false
+  playingAudio=false;audioGeneration++;audioQueue.clear();playbackResetRequested=true;audioWorker?.interrupt();audioWorker=null
+  micWorker?.interrupt();micWorker=null
+  assistantSpeaking=false
+  lastSpeakingNotification=false
+  listener.onSpeaking(false,0f)
+  val oldRecorder=recorder;recorder=null
+  try{oldRecorder?.stop()}catch(_:Exception){}
+  try{oldRecorder?.release()}catch(_:Exception){}
+  // The audio worker owns AudioTrack shutdown.
+  ws?.close(1000,"bye");ws=null
+ }
 }
